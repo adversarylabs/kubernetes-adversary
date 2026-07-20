@@ -1,5 +1,5 @@
 name: kubernetes
-version: 0.0.0
+version: 0.0.1
 description: Reviews Kubernetes manifests for workload isolation, image integrity, and host access.
 
 triggers:
