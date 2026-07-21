@@ -16,3 +16,7 @@ npm test
 adversary validate .
 adversary pack --check .
 ```
+
+## Automatic detection
+
+`adversary auto` selects the kubernetes adversary when changes include `k8s/**/*.yml` or `k8s/**/*.yaml`, plus the other domain-specific patterns declared in `adversary.yaml`. Unrelated changes do not select it.
