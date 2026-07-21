@@ -8,6 +8,21 @@ triggers:
     - "**/*.yml"
     - "**/*.yaml"
 
+detection:
+  files:
+    - "k8s/**/*.yml"
+    - "k8s/**/*.yaml"
+    - "kubernetes/**/*.yml"
+    - "kubernetes/**/*.yaml"
+    - "manifests/**/*.yml"
+    - "manifests/**/*.yaml"
+    - "**/*deployment*.yml"
+    - "**/*deployment*.yaml"
+    - "**/*service*.yml"
+    - "**/*service*.yaml"
+    - "**/*ingress*.yml"
+    - "**/*ingress*.yaml"
+
 runtime:
   name: node
   version: "22"
