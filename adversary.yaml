@@ -1,4 +1,4 @@
-name: kubernetes
+name: container/kubernetes
 version: 0.0.4
 description: Reviews Kubernetes manifests for privileged workloads, host access, RBAC, and image integrity.
 
