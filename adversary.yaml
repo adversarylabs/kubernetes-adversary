@@ -1,6 +1,6 @@
 name: kubernetes
-version: 0.0.3
-description: Reviews Kubernetes manifests for workload isolation, image integrity, and host access.
+version: 0.0.4
+description: Reviews Kubernetes manifests for privileged workloads, host access, RBAC, and image integrity.
 
 triggers:
   manual: true

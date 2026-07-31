@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: h
+spec:
+  hostNetwork: true
+  containers:
+    - name: c
+      image: app:1.0

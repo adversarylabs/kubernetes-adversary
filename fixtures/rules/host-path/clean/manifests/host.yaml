@@ -1,6 +1,14 @@
 apiVersion: v1
 kind: Pod
+metadata:
+  name: h
 spec:
+  containers:
+    - name: c
+      image: app:1.0
+      volumeMounts:
+        - name: data
+          mountPath: /data
   volumes:
     - name: data
       emptyDir: {}

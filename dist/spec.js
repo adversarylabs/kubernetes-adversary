@@ -1,7 +1,7 @@
 export const spec = {
     "id": "kubernetes",
     "displayName": "Kubernetes",
-    "description": "Reviews Kubernetes manifests for workload isolation, image integrity, and host access.",
+    "description": "Reviews Kubernetes manifests for privileged workloads, host access, RBAC, and image integrity.",
     "files": [
         "**/*.yml",
         "**/*.yaml"
@@ -14,9 +14,9 @@ export const spec = {
             "category": "security",
             "severity": "critical",
             "confidence": "high",
-            "whyItMatters": "Container runs privileged weakens an important security boundary.",
-            "impact": "The repository may behave insecurely, unreliably, or differently from the reviewed configuration.",
-            "recommendation": "Remove privileged mode and grant only required capabilities.",
+            "whyItMatters": "Privileged containers effectively get host-level capabilities.",
+            "impact": "Container escape becomes trivial.",
+            "recommendation": "Remove privileged mode; grant only required capabilities.",
             "complexity": "small",
             "tags": [
                 "security",
@@ -36,15 +36,71 @@ export const spec = {
             }
         },
         {
+            "id": "kubernetes.host-pid-or-network",
+            "title": "Pod shares host PID, IPC, or network namespace",
+            "summary": "Pod shares host PID, IPC, or network namespace",
+            "category": "security",
+            "severity": "critical",
+            "confidence": "high",
+            "whyItMatters": "Host namespaces break container isolation.",
+            "impact": "Host process visibility and port binding.",
+            "recommendation": "Remove hostPID/hostIPC/hostNetwork unless required for a node agent.",
+            "complexity": "small",
+            "tags": [
+                "security",
+                "host-ns"
+            ],
+            "match": {
+                "kind": "content",
+                "files": [
+                    "**/*.yml",
+                    "**/*.yaml"
+                ],
+                "pattern": {
+                    "pattern": "host(?:PID|IPC|Network):\\s*true",
+                    "flags": "i"
+                },
+                "requires": []
+            }
+        },
+        {
+            "id": "kubernetes.cluster-admin-binding",
+            "title": "Workload ServiceAccount bound to cluster-admin",
+            "summary": "Workload ServiceAccount bound to cluster-admin",
+            "category": "security",
+            "severity": "critical",
+            "confidence": "high",
+            "whyItMatters": "Full cluster control from any pod using that SA.",
+            "impact": "Cluster takeover from a single compromised pod.",
+            "recommendation": "Create a least-privilege Role/ClusterRole for the app.",
+            "complexity": "small",
+            "tags": [
+                "security",
+                "rbac"
+            ],
+            "match": {
+                "kind": "content",
+                "files": [
+                    "**/*.yml",
+                    "**/*.yaml"
+                ],
+                "pattern": {
+                    "pattern": "kind:\\s*ClusterRoleBinding[\\s\\S]{0,400}roleRef:[\\s\\S]{0,120}name:\\s*cluster-admin[\\s\\S]{0,200}kind:\\s*ServiceAccount",
+                    "flags": "i"
+                },
+                "requires": []
+            }
+        },
+        {
             "id": "kubernetes.host-path",
             "title": "Pod mounts a hostPath volume",
             "summary": "Pod mounts a hostPath volume",
             "category": "security",
             "severity": "high",
             "confidence": "high",
-            "whyItMatters": "Pod mounts a hostPath volume weakens an important security boundary.",
-            "impact": "The repository may behave insecurely, unreliably, or differently from the reviewed configuration.",
-            "recommendation": "Replace hostPath with a scoped volume or a constrained read-only path.",
+            "whyItMatters": "hostPath is a classic escape and credential theft path.",
+            "impact": "Host filesystem access from the pod.",
+            "recommendation": "Prefer PVC/CSI; never mount docker.sock into untrusted pods.",
             "complexity": "small",
             "tags": [
                 "security",
@@ -64,19 +120,19 @@ export const spec = {
             }
         },
         {
-            "id": "kubernetes.mutable-image",
-            "title": "Workload image uses a mutable tag",
-            "summary": "Workload image uses a mutable tag",
-            "category": "supply-chain",
-            "severity": "medium",
+            "id": "kubernetes.allow-privilege-escalation",
+            "title": "allowPrivilegeEscalation not disabled for root or added caps",
+            "summary": "allowPrivilegeEscalation not disabled for root or added caps",
+            "category": "security",
+            "severity": "high",
             "confidence": "high",
-            "whyItMatters": "Workload image uses a mutable tag weakens an important supply-chain boundary.",
-            "impact": "The repository may behave insecurely, unreliably, or differently from the reviewed configuration.",
-            "recommendation": "Pin production images by digest.",
+            "whyItMatters": "Processes can gain more privileges than the parent.",
+            "impact": "Privilege escalation inside the container.",
+            "recommendation": "Set allowPrivilegeEscalation: false on all containers.",
             "complexity": "small",
             "tags": [
-                "supply-chain",
-                "mutable-image"
+                "security",
+                "pss"
             ],
             "match": {
                 "kind": "content",
@@ -85,7 +141,119 @@ export const spec = {
                     "**/*.yaml"
                 ],
                 "pattern": {
-                    "pattern": "image:\\s*[^\\s]+:(?:latest|main|edge)\\b",
+                    "pattern": "(?:runAsUser:\\s*0|capabilities:[\\s\\S]{0,80}add:)(?![\\s\\S]{0,200}allowPrivilegeEscalation:\\s*false)",
+                    "flags": "i"
+                },
+                "requires": []
+            }
+        },
+        {
+            "id": "kubernetes.run-as-root",
+            "title": "Container explicitly runs as root",
+            "summary": "Container explicitly runs as root",
+            "category": "security",
+            "severity": "high",
+            "confidence": "high",
+            "whyItMatters": "Root in container increases escape impact.",
+            "impact": "Broader host impact on escape.",
+            "recommendation": "Run as non-root; set runAsNonRoot: true.",
+            "complexity": "small",
+            "tags": [
+                "security",
+                "root"
+            ],
+            "match": {
+                "kind": "content",
+                "files": [
+                    "**/*.yml",
+                    "**/*.yaml"
+                ],
+                "pattern": {
+                    "pattern": "(?:runAsUser:\\s*0\\b|runAsNonRoot:\\s*false)",
+                    "flags": "i"
+                },
+                "requires": []
+            }
+        },
+        {
+            "id": "kubernetes.mutable-image",
+            "title": "Image uses latest or has no tag/digest",
+            "summary": "Image uses latest or has no tag/digest",
+            "category": "supply-chain",
+            "severity": "high",
+            "confidence": "high",
+            "whyItMatters": "Floating tags make deploys non-reproducible.",
+            "impact": "Unexpected image content on redeploy.",
+            "recommendation": "Pin images by version tag or digest.",
+            "complexity": "small",
+            "tags": [
+                "supply-chain",
+                "image"
+            ],
+            "match": {
+                "kind": "content",
+                "files": [
+                    "**/*.yml",
+                    "**/*.yaml"
+                ],
+                "pattern": {
+                    "pattern": "image:\\s*[\\\"']?[^\\\"'\\s:@]+(?::latest)?[\\\"']?\\s*(?:$|#)",
+                    "flags": "i"
+                },
+                "requires": []
+            }
+        },
+        {
+            "id": "kubernetes.wildcard-rbac",
+            "title": "Role grants wildcard verbs and resources",
+            "summary": "Role grants wildcard verbs and resources",
+            "category": "permissions",
+            "severity": "high",
+            "confidence": "high",
+            "whyItMatters": "Wildcard RBAC is near-admin on the API group scope.",
+            "impact": "Over-broad cluster or namespace power.",
+            "recommendation": "Enumerate exact resources and verbs.",
+            "complexity": "small",
+            "tags": [
+                "permissions",
+                "rbac"
+            ],
+            "match": {
+                "kind": "content",
+                "files": [
+                    "**/*.yml",
+                    "**/*.yaml"
+                ],
+                "pattern": {
+                    "pattern": "(?:verbs|resources):\\s*\\[[^\\]]*[\\\"']?\\*[\\\"']?",
+                    "flags": "i"
+                },
+                "requires": []
+            }
+        },
+        {
+            "id": "kubernetes.secret-in-configmap",
+            "title": "ConfigMap carries credential-shaped values",
+            "summary": "ConfigMap carries credential-shaped values",
+            "category": "secrets",
+            "severity": "high",
+            "confidence": "high",
+            "whyItMatters": "ConfigMaps are not Secrets and are widely readable.",
+            "impact": "Credentials leak via casual kubectl dumps.",
+            "recommendation": "Move credentials to a Secret or external secret manager.",
+            "complexity": "small",
+            "tags": [
+                "secrets",
+                "configmap"
+            ],
+            "match": {
+                "kind": "content",
+                "files": [
+                    "**/*.yml",
+                    "**/*.yaml"
+                ],
+                "pattern": {
+                    "pattern": "kind:\\s*ConfigMap[\\s\\S]{0,400}(?:password|token|secret|api[_-]?key)\\s*:\\s*[\\\"']?[A-Za-z0-9/+=_\\-]{12,}",
                     "flags": "i"
                 },
                 "requires": []
