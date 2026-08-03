@@ -11,17 +11,15 @@ interface SourceFile { path: string; source: string }
 interface Detection { rule: RuleSpec; file: string; line: number; snippet: string; label: string; data: Record<string, unknown> }
 
 export async function analyzeRepository(ctx: RuleContext): Promise<void> {
+  // Full tree for existence/context checks; content uses CLI/SDK review scope.
   const allPaths = await walk(ctx.repoPath);
-  const candidatePaths = allPaths.filter((path) => spec.files.some((glob) => matchesGlob(path, glob))).sort();
-  const sources: SourceFile[] = [];
-  for (const path of candidatePaths) {
-    try {
-      const source = await readFile(join(ctx.repoPath, path), "utf8");
-      if (!source.includes("\0")) sources.push({ path, source });
-    } catch {
-      // A disappearing or unreadable file is ignored deterministically.
-    }
-  }
+  const scoped = await ctx.loadInScopeSources({
+    include: (path) =>
+      !path.split("/").some((segment) => SKIPPED.has(segment)) &&
+      spec.files.some((glob) => matchesGlob(path, glob)),
+    limit: MAX_FILES,
+  });
+  const sources: SourceFile[] = scoped.map((file) => ({ path: file.path, source: file.content }));
   ctx.summary.files_scanned = sources.length;
 
   const detections = spec.rules.flatMap((rule) => evaluate(rule, sources, allPaths));

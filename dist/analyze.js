@@ -1,23 +1,18 @@
-import { readFile, readdir } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { observationFor } from "./rules.js";
 import { spec } from "./spec.js";
 const SKIPPED = new Set([".adversary", ".git", ".hg", ".next", ".svn", "coverage", "dist", "node_modules", "target", "vendor"]);
 const MAX_FILES = 5000;
 export async function analyzeRepository(ctx) {
+    // Full tree for existence/context checks; content uses CLI/SDK review scope.
     const allPaths = await walk(ctx.repoPath);
-    const candidatePaths = allPaths.filter((path) => spec.files.some((glob) => matchesGlob(path, glob))).sort();
-    const sources = [];
-    for (const path of candidatePaths) {
-        try {
-            const source = await readFile(join(ctx.repoPath, path), "utf8");
-            if (!source.includes("\0"))
-                sources.push({ path, source });
-        }
-        catch {
-            // A disappearing or unreadable file is ignored deterministically.
-        }
-    }
+    const scoped = await ctx.loadInScopeSources({
+        include: (path) => !path.split("/").some((segment) => SKIPPED.has(segment)) &&
+            spec.files.some((glob) => matchesGlob(path, glob)),
+        limit: MAX_FILES,
+    });
+    const sources = scoped.map((file) => ({ path: file.path, source: file.content }));
     ctx.summary.files_scanned = sources.length;
     const detections = spec.rules.flatMap((rule) => evaluate(rule, sources, allPaths));
     detections.sort((a, b) => a.rule.id.localeCompare(b.rule.id) || a.file.localeCompare(b.file) || a.line - b.line || a.label.localeCompare(b.label));
