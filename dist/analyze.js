@@ -46,6 +46,14 @@ function evaluate(rule, sources, allPaths) {
             return [{ rule, file: file.path, ...location, label: rule.title, data: { requiredPattern: match.required.pattern } }];
         });
     }
+    if (match.kind === "indented-block-missing-content") {
+        return matchingSources.flatMap((file) => extractIndentedBlocks(file.source, match.blockStart).flatMap((block) => {
+            if (!test(block.source, match.trigger) || test(block.source, match.required))
+                return [];
+            const location = locateFromIndex(file.source, block.start);
+            return [{ rule, file: file.path, ...location, label: rule.title, data: { requiredPattern: match.required.pattern } }];
+        }));
+    }
     return matchingSources.flatMap((file) => {
         if (!match.requires.every((pattern) => test(file.source, pattern)))
             return [];
@@ -62,8 +70,41 @@ function locate(source, expression) {
     const match = new RegExp(expression.pattern, expression.flags).exec(source);
     if (match?.index === undefined)
         return undefined;
-    const line = source.slice(0, match.index).split(/\r?\n/).length;
+    return locateFromIndex(source, match.index);
+}
+function locateFromIndex(source, index) {
+    const line = source.slice(0, index).split(/\r?\n/).length;
     return { line, snippet: source.split(/\r?\n/)[line - 1]?.trim().slice(0, 240) ?? "" };
+}
+function extractIndentedBlocks(source, start) {
+    const flags = start.flags.includes("g") ? start.flags : `${start.flags}g`;
+    const expression = new RegExp(start.pattern, flags);
+    const blocks = [];
+    let match;
+    while ((match = expression.exec(source)) !== null) {
+        const lineStart = source.lastIndexOf("\n", Math.max(0, match.index - 1)) + 1;
+        const lineEnd = source.indexOf("\n", match.index);
+        const firstLineEnd = lineEnd < 0 ? source.length : lineEnd;
+        const indentation = source.slice(lineStart, firstLineEnd).match(/^[ \t]*/)?.[0].length ?? 0;
+        let end = source.length;
+        let cursor = firstLineEnd < source.length ? firstLineEnd + 1 : source.length;
+        while (cursor < source.length) {
+            const nextLineEnd = source.indexOf("\n", cursor);
+            const currentEnd = nextLineEnd < 0 ? source.length : nextLineEnd;
+            const line = source.slice(cursor, currentEnd);
+            if (line.trim() !== "") {
+                const currentIndentation = line.match(/^[ \t]*/)?.[0].length ?? 0;
+                if (currentIndentation <= indentation) {
+                    end = cursor;
+                    break;
+                }
+            }
+            cursor = currentEnd < source.length ? currentEnd + 1 : source.length;
+        }
+        blocks.push({ source: source.slice(match.index, end), start: match.index });
+        expression.lastIndex = Math.max(expression.lastIndex, end);
+    }
+    return blocks;
 }
 async function walk(root) {
     const files = [];

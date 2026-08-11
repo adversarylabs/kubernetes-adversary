@@ -5,7 +5,7 @@ import { createApp } from "../src/index.ts";
 
 const fixture = (name: string) => new URL(`../fixtures/${name}`, import.meta.url).pathname;
 const review = (name: string, raw = false) => createApp().run({ input: { source: { path: fixture(name) } }, includeRawObservations: raw });
-const ruleCases = [{"key": "privileged", "id": "kubernetes.privileged"}, {"key": "host-pid-or-network", "id": "kubernetes.host-pid-or-network"}, {"key": "cluster-admin-binding", "id": "kubernetes.cluster-admin-binding"}, {"key": "host-path", "id": "kubernetes.host-path"}, {"key": "allow-privilege-escalation", "id": "kubernetes.allow-privilege-escalation"}, {"key": "run-as-root", "id": "kubernetes.run-as-root"}, {"key": "mutable-image", "id": "kubernetes.mutable-image"}, {"key": "wildcard-rbac", "id": "kubernetes.wildcard-rbac"}, {"key": "secret-in-configmap", "id": "kubernetes.secret-in-configmap"}];
+const ruleCases = [{"key": "privileged", "id": "kubernetes.privileged"}, {"key": "host-pid-or-network", "id": "kubernetes.host-pid-or-network"}, {"key": "cluster-admin-binding", "id": "kubernetes.cluster-admin-binding"}, {"key": "host-path", "id": "kubernetes.host-path"}, {"key": "allow-privilege-escalation", "id": "kubernetes.allow-privilege-escalation"}, {"key": "run-as-root", "id": "kubernetes.run-as-root"}, {"key": "sys-admin-without-drop-all", "id": "kubernetes.sys-admin-without-drop-all"}, {"key": "mutable-image", "id": "kubernetes.mutable-image"}, {"key": "wildcard-rbac", "id": "kubernetes.wildcard-rbac"}, {"key": "secret-in-configmap", "id": "kubernetes.secret-in-configmap"}];
 
 test("every shipped rule has focused vulnerable and clean coverage", async () => {
   for (const rule of ruleCases) {
