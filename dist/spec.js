@@ -176,6 +176,42 @@ export const spec = {
             }
         },
         {
+            "id": "kubernetes.sys-admin-without-drop-all",
+            "title": "SYS_ADMIN is added without dropping default capabilities",
+            "summary": "SYS_ADMIN is added without dropping default capabilities",
+            "category": "security",
+            "severity": "high",
+            "confidence": "high",
+            "whyItMatters": "Setting privileged to false does not remove Linux capabilities, and adding SYS_ADMIN without first dropping the defaults leaves more privileges than the manifest explicitly requests.",
+            "impact": "A compromised process retains the runtime's default capability set in addition to broad node-level SYS_ADMIN powers.",
+            "recommendation": "Drop ALL capabilities before adding back only the capabilities the container requires.",
+            "complexity": "small",
+            "tags": [
+                "security",
+                "capabilities",
+                "least-privilege"
+            ],
+            "match": {
+                "kind": "indented-block-missing-content",
+                "files": [
+                    "**/*.yml",
+                    "**/*.yaml"
+                ],
+                "blockStart": {
+                    "pattern": "^[ \\t]*securityContext:\\s*$",
+                    "flags": "im"
+                },
+                "trigger": {
+                    "pattern": "(?:privileged:\\s*false[\\s\\S]*capabilities:[\\s\\S]*add:[\\s\\S]*-\\s*SYS_ADMIN\\b|capabilities:[\\s\\S]*add:[\\s\\S]*-\\s*SYS_ADMIN\\b[\\s\\S]*privileged:\\s*false)",
+                    "flags": "i"
+                },
+                "required": {
+                    "pattern": "drop:\\s*(?:\\[[^\\]]*[\\\"']?ALL[\\\"']?[^\\]]*\\]|(?:\\r?\\n\\s*-\\s*ALL\\b))",
+                    "flags": "i"
+                }
+            }
+        },
+        {
             "id": "kubernetes.mutable-image",
             "title": "Image uses latest or has no tag/digest",
             "summary": "Image uses latest or has no tag/digest",

@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-agent
+spec:
+  template:
+    spec:
+      containers:
+        - name: agent
+          image: example.com/node-agent:v1.2.3
+          securityContext:
+            privileged: false
+            runAsUser: 0
+            capabilities:
+              add:
+                - NET_ADMIN
+                - SYS_ADMIN
+        - name: metrics
+          image: example.com/metrics:v1.2.3
+          securityContext:
+            privileged: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["NET_BIND_SERVICE"]

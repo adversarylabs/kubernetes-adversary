@@ -3,11 +3,12 @@ import { type Confidence, type Severity } from "@adversarylabs/sdk";
 export interface MatchExpression { pattern: string; flags: string }
 interface ContentMatch { kind: "content"; files: string[]; pattern: MatchExpression; requires: MatchExpression[] }
 interface MissingContentMatch { kind: "missing-content"; files: string[]; trigger: MatchExpression; required: MatchExpression }
+interface IndentedBlockMissingContentMatch { kind: "indented-block-missing-content"; files: string[]; blockStart: MatchExpression; trigger: MatchExpression; required: MatchExpression }
 interface MissingFileMatch { kind: "missing-file"; triggerFiles: string[]; requiredFiles: string[] }
 export interface RuleSpec {
   id: string; title: string; summary: string; category: string; severity: Severity; confidence: Confidence;
   whyItMatters: string; impact: string; recommendation: string; complexity: "trivial" | "small" | "medium" | "large"; tags: string[];
-  match: ContentMatch | MissingContentMatch | MissingFileMatch;
+  match: ContentMatch | MissingContentMatch | IndentedBlockMissingContentMatch | MissingFileMatch;
 }
 export interface AdversarySpec { id: string; displayName: string; description: string; files: string[]; rules: RuleSpec[] }
 
@@ -186,6 +187,42 @@ export const spec = {
           "flags": "i"
         },
         "requires": []
+      }
+    },
+    {
+      "id": "kubernetes.sys-admin-without-drop-all",
+      "title": "SYS_ADMIN is added without dropping default capabilities",
+      "summary": "SYS_ADMIN is added without dropping default capabilities",
+      "category": "security",
+      "severity": "high",
+      "confidence": "high",
+      "whyItMatters": "Setting privileged to false does not remove Linux capabilities, and adding SYS_ADMIN without first dropping the defaults leaves more privileges than the manifest explicitly requests.",
+      "impact": "A compromised process retains the runtime's default capability set in addition to broad node-level SYS_ADMIN powers.",
+      "recommendation": "Drop ALL capabilities before adding back only the capabilities the container requires.",
+      "complexity": "small",
+      "tags": [
+        "security",
+        "capabilities",
+        "least-privilege"
+      ],
+      "match": {
+        "kind": "indented-block-missing-content",
+        "files": [
+          "**/*.yml",
+          "**/*.yaml"
+        ],
+        "blockStart": {
+          "pattern": "^[ \\t]*securityContext:\\s*$",
+          "flags": "im"
+        },
+        "trigger": {
+          "pattern": "(?:privileged:\\s*false[\\s\\S]*capabilities:[\\s\\S]*add:[\\s\\S]*-\\s*SYS_ADMIN\\b|capabilities:[\\s\\S]*add:[\\s\\S]*-\\s*SYS_ADMIN\\b[\\s\\S]*privileged:\\s*false)",
+          "flags": "i"
+        },
+        "required": {
+          "pattern": "drop:\\s*(?:\\[[^\\]]*[\\\"']?ALL[\\\"']?[^\\]]*\\]|(?:\\r?\\n\\s*-\\s*ALL\\b))",
+          "flags": "i"
+        }
       }
     },
     {

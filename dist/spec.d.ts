@@ -15,6 +15,13 @@ interface MissingContentMatch {
     trigger: MatchExpression;
     required: MatchExpression;
 }
+interface IndentedBlockMissingContentMatch {
+    kind: "indented-block-missing-content";
+    files: string[];
+    blockStart: MatchExpression;
+    trigger: MatchExpression;
+    required: MatchExpression;
+}
 interface MissingFileMatch {
     kind: "missing-file";
     triggerFiles: string[];
@@ -32,7 +39,7 @@ export interface RuleSpec {
     recommendation: string;
     complexity: "trivial" | "small" | "medium" | "large";
     tags: string[];
-    match: ContentMatch | MissingContentMatch | MissingFileMatch;
+    match: ContentMatch | MissingContentMatch | IndentedBlockMissingContentMatch | MissingFileMatch;
 }
 export interface AdversarySpec {
     id: string;
@@ -171,6 +178,34 @@ export declare const spec: {
                 readonly flags: "i";
             };
             readonly requires: [];
+        };
+    }, {
+        readonly id: "kubernetes.sys-admin-without-drop-all";
+        readonly title: "SYS_ADMIN is added without dropping default capabilities";
+        readonly summary: "SYS_ADMIN is added without dropping default capabilities";
+        readonly category: "security";
+        readonly severity: "high";
+        readonly confidence: "high";
+        readonly whyItMatters: "Setting privileged to false does not remove Linux capabilities, and adding SYS_ADMIN without first dropping the defaults leaves more privileges than the manifest explicitly requests.";
+        readonly impact: "A compromised process retains the runtime's default capability set in addition to broad node-level SYS_ADMIN powers.";
+        readonly recommendation: "Drop ALL capabilities before adding back only the capabilities the container requires.";
+        readonly complexity: "small";
+        readonly tags: ["security", "capabilities", "least-privilege"];
+        readonly match: {
+            readonly kind: "indented-block-missing-content";
+            readonly files: ["**/*.yml", "**/*.yaml"];
+            readonly blockStart: {
+                readonly pattern: "^[ \\t]*securityContext:\\s*$";
+                readonly flags: "im";
+            };
+            readonly trigger: {
+                readonly pattern: "(?:privileged:\\s*false[\\s\\S]*capabilities:[\\s\\S]*add:[\\s\\S]*-\\s*SYS_ADMIN\\b|capabilities:[\\s\\S]*add:[\\s\\S]*-\\s*SYS_ADMIN\\b[\\s\\S]*privileged:\\s*false)";
+                readonly flags: "i";
+            };
+            readonly required: {
+                readonly pattern: "drop:\\s*(?:\\[[^\\]]*[\\\"']?ALL[\\\"']?[^\\]]*\\]|(?:\\r?\\n\\s*-\\s*ALL\\b))";
+                readonly flags: "i";
+            };
         };
     }, {
         readonly id: "kubernetes.mutable-image";
