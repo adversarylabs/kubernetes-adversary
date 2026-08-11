@@ -1,5 +1,5 @@
 name: container/kubernetes
-version: 0.0.6
+version: 0.0.7
 description: Reviews Kubernetes manifests for privileged workloads, host access, RBAC, and image integrity.
 
 triggers:
