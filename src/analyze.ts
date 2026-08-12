@@ -1,6 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { type RuleContext } from "@adversarylabs/sdk";
+import { isScalar, parseAllDocuments } from "yaml";
 import { observationFor } from "./rules.js";
 import { spec, type MatchExpression, type RuleSpec } from "./spec.js";
 
@@ -45,6 +46,10 @@ function evaluate(rule: RuleSpec, sources: SourceFile[], allPaths: string[]): De
   }
 
   const matchingSources = sources.filter((file) => match.files.some((glob) => matchesGlob(file.path, glob)));
+  if (match.kind === "selector-template-mismatch") {
+    return matchingSources.flatMap((file) => findSelectorTemplateMismatches(rule, file));
+  }
+
   if (match.kind === "missing-content") {
     return matchingSources.flatMap((file) => {
       if (!test(file.source, match.trigger) || test(file.source, match.required)) return [];
@@ -70,6 +75,65 @@ function evaluate(rule: RuleSpec, sources: SourceFile[], allPaths: string[]): De
     if (location === undefined) return [];
     return [{ rule, file: file.path, ...location, label: rule.title, data: { matchedPattern: match.pattern.pattern } }];
   });
+}
+
+const SELECTOR_WORKLOADS = new Set(["DaemonSet", "Deployment", "ReplicaSet", "StatefulSet"]);
+
+function findSelectorTemplateMismatches(rule: RuleSpec, file: SourceFile): Detection[] {
+  const detections: Detection[] = [];
+  let documents;
+  try {
+    documents = parseAllDocuments(file.source, { prettyErrors: false, uniqueKeys: true });
+  } catch {
+    return [];
+  }
+
+  for (const document of documents) {
+    if (document.errors.length > 0) continue;
+    let manifest: Record<string, unknown> | undefined;
+    try {
+      manifest = asRecord(document.toJS({ maxAliasCount: 100 }));
+    } catch {
+      continue;
+    }
+    if (!manifest || typeof manifest.kind !== "string" || !SELECTOR_WORKLOADS.has(manifest.kind)) continue;
+
+    const specValue = asRecord(manifest.spec);
+    const selector = asRecord(asRecord(specValue?.selector)?.matchLabels);
+    const templateLabels = asRecord(asRecord(asRecord(specValue?.template)?.metadata)?.labels);
+    if (!selector) continue;
+
+    for (const [key, expected] of Object.entries(selector)) {
+      if (typeof expected !== "string") continue;
+      const actual = templateLabels?.[key];
+      if (actual === expected) continue;
+
+      const node = document.getIn(["spec", "selector", "matchLabels", key], true);
+      const index = isScalar(node) && node.range ? node.range[0] : document.range?.[0] ?? 0;
+      const workloadName = asRecord(manifest.metadata)?.name;
+      const displayName = typeof workloadName === "string" ? `${manifest.kind} ${workloadName}` : manifest.kind;
+      const actualDescription = actual === undefined ? "missing" : JSON.stringify(actual);
+      detections.push({
+        rule,
+        file: file.path,
+        ...locateFromIndex(file.source, index),
+        label: `${displayName} selector label ${key} does not match its pod template`,
+        data: {
+          workloadKind: manifest.kind,
+          workloadName: typeof workloadName === "string" ? workloadName : undefined,
+          selectorKey: key,
+          selectorValue: expected,
+          templateValue: actual ?? null,
+          mismatch: `expected ${JSON.stringify(expected)}, found ${actualDescription}`,
+        },
+      });
+    }
+  }
+  return detections;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
 function test(source: string, expression: MatchExpression): boolean {

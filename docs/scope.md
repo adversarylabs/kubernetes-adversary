@@ -8,13 +8,14 @@ Source of truth for what this adversary is *for*.
 
 ## Mission
 
-Review Kubernetes manifests for privileged workloads, host access, RBAC, image integrity.
+Review Kubernetes manifests for workload isolation, selector integrity, RBAC, and image safety.
 
 ## In scope (fair miss if humans raised it and we did not)
 
 - Privileged pods, hostPath, hostNetwork
 - RBAC overreach
 - Mutable image tags
+- Workload selectors that do not match pod-template labels
 
 ## Out of scope (not a miss for this adversary)
 

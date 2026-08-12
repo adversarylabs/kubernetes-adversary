@@ -1,7 +1,7 @@
 export const spec = {
     "id": "kubernetes",
     "displayName": "Kubernetes",
-    "description": "Reviews Kubernetes manifests for privileged workloads, host access, RBAC, and image integrity.",
+    "description": "Reviews Kubernetes manifests for workload isolation, selector integrity, RBAC, and image safety.",
     "files": [
         "**/*.yml",
         "**/*.yaml"
@@ -237,6 +237,30 @@ export const spec = {
                     "flags": "i"
                 },
                 "requires": []
+            }
+        },
+        {
+            "id": "kubernetes.selector-template-mismatch",
+            "title": "Workload selector does not match pod template",
+            "summary": "Workload selector does not match pod template",
+            "category": "correctness",
+            "severity": "high",
+            "confidence": "high",
+            "whyItMatters": "A controller's matchLabels must be present with the same values on its pod template.",
+            "impact": "Kubernetes rejects the workload, preventing it from being created or updated.",
+            "recommendation": "Make every spec.selector.matchLabels entry match the corresponding spec.template.metadata.labels entry.",
+            "complexity": "trivial",
+            "tags": [
+                "kubernetes",
+                "selector",
+                "workload"
+            ],
+            "match": {
+                "kind": "selector-template-mismatch",
+                "files": [
+                    "**/*.yml",
+                    "**/*.yaml"
+                ]
             }
         },
         {
