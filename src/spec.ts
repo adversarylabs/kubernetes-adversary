@@ -1,7 +1,7 @@
 import { type Confidence, type Severity } from "@adversarylabs/sdk";
 
 export interface MatchExpression { pattern: string; flags: string }
-interface ContentMatch { kind: "content"; files: string[]; pattern: MatchExpression; requires: MatchExpression[] }
+interface ContentMatch { kind: "content"; files: string[]; pattern: MatchExpression; anchors?: MatchExpression[]; requires: MatchExpression[] }
 interface MissingContentMatch { kind: "missing-content"; files: string[]; trigger: MatchExpression; required: MatchExpression }
 interface IndentedBlockMissingContentMatch { kind: "indented-block-missing-content"; files: string[]; blockStart: MatchExpression; trigger: MatchExpression; required: MatchExpression }
 interface MissingFileMatch { kind: "missing-file"; triggerFiles: string[]; requiredFiles: string[] }
@@ -47,6 +47,12 @@ export const spec = {
           "pattern": "privileged:\\s*true",
           "flags": "i"
         },
+        "anchors": [
+          {
+            "pattern": "privileged:\\s*true",
+            "flags": "i"
+          }
+        ],
         "requires": []
       }
     },
@@ -75,6 +81,12 @@ export const spec = {
           "pattern": "host(?:PID|IPC|Network):\\s*true",
           "flags": "i"
         },
+        "anchors": [
+          {
+            "pattern": "host(?:PID|IPC|Network):\\s*true",
+            "flags": "i"
+          }
+        ],
         "requires": []
       }
     },
@@ -103,6 +115,12 @@ export const spec = {
           "pattern": "kind:\\s*ClusterRoleBinding[\\s\\S]{0,400}roleRef:[\\s\\S]{0,120}name:\\s*cluster-admin[\\s\\S]{0,200}kind:\\s*ServiceAccount",
           "flags": "i"
         },
+        "anchors": [
+          {
+            "pattern": "kind:\\s*ClusterRoleBinding|roleRef:|name:\\s*cluster-admin|kind:\\s*ServiceAccount",
+            "flags": "i"
+          }
+        ],
         "requires": []
       }
     },
@@ -131,6 +149,12 @@ export const spec = {
           "pattern": "hostPath:\\s*(?:\\n|\\{)",
           "flags": "i"
         },
+        "anchors": [
+          {
+            "pattern": "hostPath:\\s*(?:\\n|\\{)",
+            "flags": "i"
+          }
+        ],
         "requires": []
       }
     },
@@ -187,6 +211,12 @@ export const spec = {
           "pattern": "(?:runAsUser:\\s*0\\b|runAsNonRoot:\\s*false)",
           "flags": "i"
         },
+        "anchors": [
+          {
+            "pattern": "(?:runAsUser:\\s*0\\b|runAsNonRoot:\\s*false)",
+            "flags": "i"
+          }
+        ],
         "requires": []
       }
     },
@@ -251,6 +281,12 @@ export const spec = {
           "pattern": "image:\\s*[\\\"']?[^\\\"'\\s:@]+(?::latest)?[\\\"']?\\s*(?:$|#)",
           "flags": "i"
         },
+        "anchors": [
+          {
+            "pattern": "image:\\s*[\\\"']?[^\\\"'\\s:@]+(?::latest)?[\\\"']?\\s*(?:$|#)",
+            "flags": "i"
+          }
+        ],
         "requires": []
       }
     },
@@ -303,6 +339,12 @@ export const spec = {
           "pattern": "(?:verbs|resources):\\s*\\[[^\\]]*[\\\"']?\\*[\\\"']?",
           "flags": "i"
         },
+        "anchors": [
+          {
+            "pattern": "(?:verbs|resources):\\s*\\[[^\\]]*[\\\"']?\\*[\\\"']?",
+            "flags": "i"
+          }
+        ],
         "requires": []
       }
     },
@@ -331,6 +373,12 @@ export const spec = {
           "pattern": "kind:\\s*ConfigMap[\\s\\S]{0,400}(?:password|token|secret|api[_-]?key)\\s*:\\s*[\\\"']?[A-Za-z0-9/+=_\\-]{12,}",
           "flags": "i"
         },
+        "anchors": [
+          {
+            "pattern": "kind:\\s*ConfigMap|(?:password|token|secret|api[_-]?key)\\s*:\\s*[\\\"']?[A-Za-z0-9/+=_\\-]{12,}",
+            "flags": "i"
+          }
+        ],
         "requires": []
       }
     }

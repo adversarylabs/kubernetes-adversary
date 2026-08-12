@@ -7,6 +7,7 @@ interface ContentMatch {
     kind: "content";
     files: string[];
     pattern: MatchExpression;
+    anchors?: MatchExpression[];
     requires: MatchExpression[];
 }
 interface MissingContentMatch {
@@ -76,6 +77,10 @@ export declare const spec: {
                 readonly pattern: "privileged:\\s*true";
                 readonly flags: "i";
             };
+            readonly anchors: [{
+                readonly pattern: "privileged:\\s*true";
+                readonly flags: "i";
+            }];
             readonly requires: [];
         };
     }, {
@@ -97,6 +102,10 @@ export declare const spec: {
                 readonly pattern: "host(?:PID|IPC|Network):\\s*true";
                 readonly flags: "i";
             };
+            readonly anchors: [{
+                readonly pattern: "host(?:PID|IPC|Network):\\s*true";
+                readonly flags: "i";
+            }];
             readonly requires: [];
         };
     }, {
@@ -118,6 +127,10 @@ export declare const spec: {
                 readonly pattern: "kind:\\s*ClusterRoleBinding[\\s\\S]{0,400}roleRef:[\\s\\S]{0,120}name:\\s*cluster-admin[\\s\\S]{0,200}kind:\\s*ServiceAccount";
                 readonly flags: "i";
             };
+            readonly anchors: [{
+                readonly pattern: "kind:\\s*ClusterRoleBinding|roleRef:|name:\\s*cluster-admin|kind:\\s*ServiceAccount";
+                readonly flags: "i";
+            }];
             readonly requires: [];
         };
     }, {
@@ -139,6 +152,10 @@ export declare const spec: {
                 readonly pattern: "hostPath:\\s*(?:\\n|\\{)";
                 readonly flags: "i";
             };
+            readonly anchors: [{
+                readonly pattern: "hostPath:\\s*(?:\\n|\\{)";
+                readonly flags: "i";
+            }];
             readonly requires: [];
         };
     }, {
@@ -181,6 +198,10 @@ export declare const spec: {
                 readonly pattern: "(?:runAsUser:\\s*0\\b|runAsNonRoot:\\s*false)";
                 readonly flags: "i";
             };
+            readonly anchors: [{
+                readonly pattern: "(?:runAsUser:\\s*0\\b|runAsNonRoot:\\s*false)";
+                readonly flags: "i";
+            }];
             readonly requires: [];
         };
     }, {
@@ -230,6 +251,10 @@ export declare const spec: {
                 readonly pattern: "image:\\s*[\\\"']?[^\\\"'\\s:@]+(?::latest)?[\\\"']?\\s*(?:$|#)";
                 readonly flags: "i";
             };
+            readonly anchors: [{
+                readonly pattern: "image:\\s*[\\\"']?[^\\\"'\\s:@]+(?::latest)?[\\\"']?\\s*(?:$|#)";
+                readonly flags: "i";
+            }];
             readonly requires: [];
         };
     }, {
@@ -267,6 +292,10 @@ export declare const spec: {
                 readonly pattern: "(?:verbs|resources):\\s*\\[[^\\]]*[\\\"']?\\*[\\\"']?";
                 readonly flags: "i";
             };
+            readonly anchors: [{
+                readonly pattern: "(?:verbs|resources):\\s*\\[[^\\]]*[\\\"']?\\*[\\\"']?";
+                readonly flags: "i";
+            }];
             readonly requires: [];
         };
     }, {
@@ -288,6 +317,10 @@ export declare const spec: {
                 readonly pattern: "kind:\\s*ConfigMap[\\s\\S]{0,400}(?:password|token|secret|api[_-]?key)\\s*:\\s*[\\\"']?[A-Za-z0-9/+=_\\-]{12,}";
                 readonly flags: "i";
             };
+            readonly anchors: [{
+                readonly pattern: "kind:\\s*ConfigMap|(?:password|token|secret|api[_-]?key)\\s*:\\s*[\\\"']?[A-Za-z0-9/+=_\\-]{12,}";
+                readonly flags: "i";
+            }];
             readonly requires: [];
         };
     }];
