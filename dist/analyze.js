@@ -82,7 +82,9 @@ function evaluate(rule, sources, allPaths) {
     return matchingSources.flatMap((file) => {
         if (!match.requires.every((pattern) => test(file.source, pattern)))
             return [];
-        const location = locate(file.source, match.pattern);
+        const location = match.anchors === undefined
+            ? locate(file.source, match.pattern)
+            : locateEligible(file, match.pattern, match.anchors);
         if (location === undefined)
             return [];
         return [{ rule, file: file.path, ...location, label: rule.title, data: { matchedPattern: match.pattern.pattern } }];
@@ -212,6 +214,39 @@ function locate(source, expression) {
     if (match?.index === undefined)
         return undefined;
     return locateFromIndex(source, match.index);
+}
+function locateEligible(file, expression, anchors) {
+    const flags = expression.flags.includes("g") ? expression.flags : `${expression.flags}g`;
+    for (const match of file.source.matchAll(new RegExp(expression.pattern, flags))) {
+        if (match.index === undefined || match[0] === "")
+            continue;
+        if (file.status !== "modified")
+            return locateFromIndex(file.source, match.index);
+        const line = eligibleSemanticAnchor(file, match.index, match[0], anchors);
+        if (line !== undefined)
+            return locateFromLine(file.source, line);
+    }
+    return undefined;
+}
+function eligibleSemanticAnchor(file, offset, matchedSource, anchors) {
+    let eligible;
+    for (const anchor of anchors) {
+        const flags = anchor.flags.includes("g") ? anchor.flags : `${anchor.flags}g`;
+        for (const match of matchedSource.matchAll(new RegExp(anchor.pattern, flags))) {
+            if (match.index === undefined || match[0] === "")
+                continue;
+            const startLine = lineAtIndex(file.source, offset + match.index);
+            const endLine = lineAtIndex(file.source, offset + match.index + match[0].length - 1);
+            for (let line = startLine; line <= endLine; line += 1) {
+                if (file.changedLines.has(line) && (eligible === undefined || line < eligible))
+                    eligible = line;
+            }
+        }
+    }
+    return eligible;
+}
+function locateFromLine(source, line) {
+    return { line, snippet: source.split(/\r?\n/)[line - 1]?.trim().slice(0, 240) ?? "" };
 }
 function locateFromIndex(source, index) {
     const line = source.slice(0, index).split(/\r?\n/).length;
