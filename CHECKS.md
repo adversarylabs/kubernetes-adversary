@@ -99,6 +99,17 @@ Public grounding: Kubernetes security documentation, NSA/CISA Kubernetes Hardeni
 | **Public examples** | Kubernetes image best practices; supply-chain guidance to pin digests |
 | **Remediation** | Pin by digest; use admission policy to ban `:latest` |
 
+### `kubernetes.selector-template-mismatch`
+
+| | |
+| --- | --- |
+| **What** | A workload's `spec.selector.matchLabels` cannot match its pod template labels |
+| **Why** | Kubernetes rejects Deployments, StatefulSets, DaemonSets, and ReplicaSets whose selectors do not match their templates |
+| **Looks for** | A selector label that is missing from `spec.template.metadata.labels` or has a different value |
+| **Stays quiet when** | Every explicit `matchLabels` entry matches; the template has extra labels; only `matchExpressions` are used; or the object is not a supported workload |
+| **Public examples** | [Kubernetes review showing the API rejection](https://github.com/kubernetes/kubernetes/pull/6807#discussion_r28971809); [core maintainer explaining the selector/template invariant](https://github.com/kubernetes/kubernetes/pull/6807#discussion_r28979581) |
+| **Remediation** | Synchronize `spec.selector.matchLabels` with the corresponding pod-template labels |
+
 ### `kubernetes.wildcard-rbac`
 
 | | |

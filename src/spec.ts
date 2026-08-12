@@ -5,17 +5,18 @@ interface ContentMatch { kind: "content"; files: string[]; pattern: MatchExpress
 interface MissingContentMatch { kind: "missing-content"; files: string[]; trigger: MatchExpression; required: MatchExpression }
 interface IndentedBlockMissingContentMatch { kind: "indented-block-missing-content"; files: string[]; blockStart: MatchExpression; trigger: MatchExpression; required: MatchExpression }
 interface MissingFileMatch { kind: "missing-file"; triggerFiles: string[]; requiredFiles: string[] }
+interface SelectorTemplateMismatch { kind: "selector-template-mismatch"; files: string[] }
 export interface RuleSpec {
   id: string; title: string; summary: string; category: string; severity: Severity; confidence: Confidence;
   whyItMatters: string; impact: string; recommendation: string; complexity: "trivial" | "small" | "medium" | "large"; tags: string[];
-  match: ContentMatch | MissingContentMatch | IndentedBlockMissingContentMatch | MissingFileMatch;
+  match: ContentMatch | MissingContentMatch | IndentedBlockMissingContentMatch | MissingFileMatch | SelectorTemplateMismatch;
 }
 export interface AdversarySpec { id: string; displayName: string; description: string; files: string[]; rules: RuleSpec[] }
 
 export const spec = {
   "id": "kubernetes",
   "displayName": "Kubernetes",
-  "description": "Reviews Kubernetes manifests for privileged workloads, host access, RBAC, and image integrity.",
+  "description": "Reviews Kubernetes manifests for workload isolation, selector integrity, RBAC, and image safety.",
   "files": [
     "**/*.yml",
     "**/*.yaml"
@@ -251,6 +252,30 @@ export const spec = {
           "flags": "i"
         },
         "requires": []
+      }
+    },
+    {
+      "id": "kubernetes.selector-template-mismatch",
+      "title": "Workload selector does not match pod template",
+      "summary": "Workload selector does not match pod template",
+      "category": "correctness",
+      "severity": "high",
+      "confidence": "high",
+      "whyItMatters": "A controller's matchLabels must be present with the same values on its pod template.",
+      "impact": "Kubernetes rejects the workload, preventing it from being created or updated.",
+      "recommendation": "Make every spec.selector.matchLabels entry match the corresponding spec.template.metadata.labels entry.",
+      "complexity": "trivial",
+      "tags": [
+        "kubernetes",
+        "selector",
+        "workload"
+      ],
+      "match": {
+        "kind": "selector-template-mismatch",
+        "files": [
+          "**/*.yml",
+          "**/*.yaml"
+        ]
       }
     },
     {

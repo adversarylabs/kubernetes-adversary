@@ -1,6 +1,6 @@
 name: container/kubernetes
 version: 0.0.7
-description: Reviews Kubernetes manifests for privileged workloads, host access, RBAC, and image integrity.
+description: Reviews Kubernetes manifests for workload isolation, selector integrity, RBAC, and image safety.
 
 triggers:
   manual: true

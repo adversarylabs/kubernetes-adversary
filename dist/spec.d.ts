@@ -27,6 +27,10 @@ interface MissingFileMatch {
     triggerFiles: string[];
     requiredFiles: string[];
 }
+interface SelectorTemplateMismatch {
+    kind: "selector-template-mismatch";
+    files: string[];
+}
 export interface RuleSpec {
     id: string;
     title: string;
@@ -39,7 +43,7 @@ export interface RuleSpec {
     recommendation: string;
     complexity: "trivial" | "small" | "medium" | "large";
     tags: string[];
-    match: ContentMatch | MissingContentMatch | IndentedBlockMissingContentMatch | MissingFileMatch;
+    match: ContentMatch | MissingContentMatch | IndentedBlockMissingContentMatch | MissingFileMatch | SelectorTemplateMismatch;
 }
 export interface AdversarySpec {
     id: string;
@@ -51,7 +55,7 @@ export interface AdversarySpec {
 export declare const spec: {
     readonly id: "kubernetes";
     readonly displayName: "Kubernetes";
-    readonly description: "Reviews Kubernetes manifests for privileged workloads, host access, RBAC, and image integrity.";
+    readonly description: "Reviews Kubernetes manifests for workload isolation, selector integrity, RBAC, and image safety.";
     readonly files: ["**/*.yml", "**/*.yaml"];
     readonly rules: [{
         readonly id: "kubernetes.privileged";
@@ -227,6 +231,22 @@ export declare const spec: {
                 readonly flags: "i";
             };
             readonly requires: [];
+        };
+    }, {
+        readonly id: "kubernetes.selector-template-mismatch";
+        readonly title: "Workload selector does not match pod template";
+        readonly summary: "Workload selector does not match pod template";
+        readonly category: "correctness";
+        readonly severity: "high";
+        readonly confidence: "high";
+        readonly whyItMatters: "A controller's matchLabels must be present with the same values on its pod template.";
+        readonly impact: "Kubernetes rejects the workload, preventing it from being created or updated.";
+        readonly recommendation: "Make every spec.selector.matchLabels entry match the corresponding spec.template.metadata.labels entry.";
+        readonly complexity: "trivial";
+        readonly tags: ["kubernetes", "selector", "workload"];
+        readonly match: {
+            readonly kind: "selector-template-mismatch";
+            readonly files: ["**/*.yml", "**/*.yaml"];
         };
     }, {
         readonly id: "kubernetes.wildcard-rbac";

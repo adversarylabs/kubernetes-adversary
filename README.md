@@ -1,6 +1,6 @@
 # kubernetes
 
-**kubernetes** reviews Kubernetes manifests for **privileged workloads, host access, RBAC overprivilege, and floating images**.
+**kubernetes** reviews Kubernetes manifests for **workload isolation, selector integrity, RBAC overprivilege, and floating images**.
 
 It is a **workload isolation reviewer**, not a cluster runtime scanner. When it reports, a pod or binding likely weakens host or API isolation.
 
@@ -21,7 +21,7 @@ Highlights:
 
 | Area | Examples |
 | --- | --- |
-| Isolation | privileged, hostPID/IPC/Network, hostPath |
+| Workloads | privileged, hostPID/IPC/Network, hostPath, selector/template mismatches |
 | Identity | cluster-admin ServiceAccount bindings |
 | Images | :latest / untagged images |
 | RBAC / secrets | wildcard verbs; credentials in ConfigMaps |
