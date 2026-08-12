@@ -1,5 +1,5 @@
 name: container/kubernetes
-version: 0.0.9
+version: 0.0.10
 description: Reviews Kubernetes manifests for workload isolation, selector integrity, RBAC, and image safety.
 
 triggers:
