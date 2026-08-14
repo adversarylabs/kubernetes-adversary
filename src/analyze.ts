@@ -151,7 +151,10 @@ function collectExplicitRootUsers(rule: RuleSpec, file: SourceFile): Detection[]
     const podSpecPath = podSpecPathFor(manifest.apiVersion, manifest.kind);
     if (podSpecPath === undefined) continue;
     const workloadKey = workloadIdentity(manifest, documentIndex);
-    const workloadIdentityNode = document.getIn(["metadata", "name"], true);
+    const workloadIdentityNodes = [
+      document.getIn(["metadata", "name"], true),
+      document.getIn(["metadata", "namespace"], true),
+    ];
     const podSpec = asRecord(valueAtPath(manifest, podSpecPath));
     if (podSpec === undefined) continue;
 
@@ -188,7 +191,7 @@ function collectExplicitRootUsers(rule: RuleSpec, file: SourceFile): Detection[]
         document,
         runAsUser.value,
         runAsUser.primary,
-        [...policyNodes, workloadIdentityNode],
+        [...policyNodes, ...workloadIdentityNodes],
         manifest.kind,
         container.name,
         "container",
@@ -223,7 +226,7 @@ function collectExplicitRootUsers(rule: RuleSpec, file: SourceFile): Detection[]
       document,
       podRunAsUserEvidence.value,
       podRunAsUserEvidence.primary,
-      [...policyNodes, ...activationNodes, workloadIdentityNode],
+      [...policyNodes, ...activationNodes, ...workloadIdentityNodes],
       manifest.kind,
       undefined,
       "pod",
@@ -263,10 +266,14 @@ function valueAtPath(value: unknown, path: readonly string[]): unknown {
 }
 
 function workloadIdentity(manifest: Record<string, unknown>, documentIndex: number): string {
-  const name = asRecord(manifest.metadata)?.name;
+  const metadata = asRecord(manifest.metadata);
+  const name = metadata?.name;
+  const namespace = typeof metadata?.namespace === "string" && metadata.namespace.length > 0
+    ? metadata.namespace
+    : "default";
   const prefix = `${String(manifest.apiVersion)}:${String(manifest.kind)}`;
   return typeof name === "string" && name.length > 0
-    ? `${prefix}:name:${name}`
+    ? `${prefix}:namespace:${namespace}:name:${name}`
     : `${prefix}:document:${documentIndex}`;
 }
 
@@ -327,7 +334,9 @@ function fieldEvidenceFromMap(
     const resolved = isAlias(candidate) ? candidate.resolve(document) : candidate;
     if (!isMap(resolved)) continue;
     const inherited = fieldEvidenceFromMap(resolved, field, document, seen);
-    if (inherited.value !== undefined) return { value: inherited.value, primary: candidate };
+    if (inherited.value !== undefined) {
+      return { value: inherited.value, primary: isAlias(candidate) ? candidate : inherited.primary };
+    }
   }
   return { value: undefined, primary: undefined };
 }

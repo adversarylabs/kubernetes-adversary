@@ -283,6 +283,29 @@ ${override}`;
   }
 });
 
+test("resolves runAsUser inherited through an inline YAML mapping merge", async () => {
+  const root = await temporaryTree({
+    "pod.yaml": `apiVersion: v1
+kind: Pod
+metadata: {name: inline-merged-security-context}
+spec:
+  containers:
+    - name: app
+      image: example/app:v1
+      securityContext:
+        <<: {runAsUser: 0}
+`,
+  });
+  try {
+    const output = await createApp().run({ input: { source: { path: root } }, includeRawObservations: true });
+    const observations = output.rawObservations?.filter((item) => item.ruleId === ruleId) ?? [];
+    assert.equal(observations.length, 1);
+    assert.equal(observations[0]?.location?.snippet, "<<: {runAsUser: 0}");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("resolves a mapping alias used as an inherited Pod security context", async () => {
   const root = await temporaryTree({
     "pod.yaml": `apiVersion: v1
@@ -569,6 +592,26 @@ spec:
     await writeFile(join(root, "pod.yaml"), `${manifest("replacement")}---\n${manifest("second")}`);
     output = await changedReview(root);
     assert.equal(output.findings.some((finding) => finding.ruleId === ruleId), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("named workload identity includes its namespace", async () => {
+  const manifest = (namespace: string, runAsUser: number) => `apiVersion: v1
+kind: Pod
+metadata: {name: shared, namespace: ${namespace}}
+spec:
+  containers:
+    - name: worker
+      image: example/app:v1
+      securityContext: {runAsUser: ${runAsUser}}
+`;
+  const root = await gitRepository(`${manifest("team-a", 0)}---\n${manifest("team-b", 10001)}`);
+  try {
+    await writeFile(join(root, "pod.yaml"), `${manifest("team-a", 0)}---\n${manifest("team-b", 0)}`);
+    const output = await changedReview(root);
+    assert.equal(output.findings.filter((finding) => finding.ruleId === ruleId).length, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -17585,7 +17585,10 @@ function collectExplicitRootUsers(rule, file) {
     const podSpecPath = podSpecPathFor(manifest.apiVersion, manifest.kind);
     if (podSpecPath === void 0) continue;
     const workloadKey = workloadIdentity(manifest, documentIndex);
-    const workloadIdentityNode = document.getIn(["metadata", "name"], true);
+    const workloadIdentityNodes = [
+      document.getIn(["metadata", "name"], true),
+      document.getIn(["metadata", "namespace"], true)
+    ];
     const podSpec = asRecord(valueAtPath(manifest, podSpecPath));
     if (podSpec === void 0) continue;
     const podSecurityContextPath = [...podSpecPath, "securityContext"];
@@ -17613,7 +17616,7 @@ function collectExplicitRootUsers(rule, file) {
         document,
         runAsUser.value,
         runAsUser.primary,
-        [...policyNodes2, workloadIdentityNode],
+        [...policyNodes2, ...workloadIdentityNodes],
         manifest.kind,
         container.name,
         "container",
@@ -17645,7 +17648,7 @@ function collectExplicitRootUsers(rule, file) {
       document,
       podRunAsUserEvidence.value,
       podRunAsUserEvidence.primary,
-      [...policyNodes, ...activationNodes, workloadIdentityNode],
+      [...policyNodes, ...activationNodes, ...workloadIdentityNodes],
       manifest.kind,
       void 0,
       "pod",
@@ -17680,9 +17683,11 @@ function valueAtPath(value, path) {
   return current;
 }
 function workloadIdentity(manifest, documentIndex) {
-  const name = asRecord(manifest.metadata)?.name;
+  const metadata = asRecord(manifest.metadata);
+  const name = metadata?.name;
+  const namespace = typeof metadata?.namespace === "string" && metadata.namespace.length > 0 ? metadata.namespace : "default";
   const prefix = `${String(manifest.apiVersion)}:${String(manifest.kind)}`;
-  return typeof name === "string" && name.length > 0 ? `${prefix}:name:${name}` : `${prefix}:document:${documentIndex}`;
+  return typeof name === "string" && name.length > 0 ? `${prefix}:namespace:${namespace}:name:${name}` : `${prefix}:document:${documentIndex}`;
 }
 function containerIdentity(container, index) {
   return typeof container.name === "string" && container.name.length > 0 ? `name:${container.name}` : `index:${index}`;
@@ -17715,7 +17720,9 @@ function fieldEvidenceFromMap(map, field, document, seen) {
     const resolved = (0, import_yaml2.isAlias)(candidate) ? candidate.resolve(document) : candidate;
     if (!(0, import_yaml2.isMap)(resolved)) continue;
     const inherited = fieldEvidenceFromMap(resolved, field, document, seen);
-    if (inherited.value !== void 0) return { value: inherited.value, primary: candidate };
+    if (inherited.value !== void 0) {
+      return { value: inherited.value, primary: (0, import_yaml2.isAlias)(candidate) ? candidate : inherited.primary };
+    }
   }
   return { value: void 0, primary: void 0 };
 }
