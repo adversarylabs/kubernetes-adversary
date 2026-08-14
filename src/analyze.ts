@@ -3,7 +3,7 @@ import { readdir } from "node:fs/promises";
 import { basename, join, sep } from "node:path";
 import { promisify } from "node:util";
 import { type RuleContext } from "@adversarylabs/sdk";
-import { isAlias, isMap, isScalar, parseAllDocuments, type Document } from "yaml";
+import { isAlias, isMap, isScalar, isSeq, parseAllDocuments, type Document, type YAMLMap } from "yaml";
 import { observationFor } from "./rules.js";
 import { spec, type MatchExpression, type RuleSpec } from "./spec.js";
 
@@ -134,7 +134,7 @@ function collectExplicitRootUsers(rule: RuleSpec, file: SourceFile): Detection[]
   const detections: Detection[] = [];
   let documents;
   try {
-    documents = parseAllDocuments(file.source, { prettyErrors: false, uniqueKeys: true });
+    documents = parseAllDocuments(file.source, { merge: true, prettyErrors: false, uniqueKeys: true });
   } catch {
     return [];
   }
@@ -150,6 +150,8 @@ function collectExplicitRootUsers(rule: RuleSpec, file: SourceFile): Detection[]
     if (!manifest || typeof manifest.kind !== "string" || typeof manifest.apiVersion !== "string") continue;
     const podSpecPath = podSpecPathFor(manifest.apiVersion, manifest.kind);
     if (podSpecPath === undefined) continue;
+    const workloadKey = workloadIdentity(manifest, documentIndex);
+    const workloadIdentityNode = document.getIn(["metadata", "name"], true);
     const podSpec = asRecord(valueAtPath(manifest, podSpecPath));
     if (podSpec === undefined) continue;
 
@@ -186,11 +188,11 @@ function collectExplicitRootUsers(rule: RuleSpec, file: SourceFile): Detection[]
         document,
         runAsUser.value,
         runAsUser.primary,
-        policyNodes,
+        [...policyNodes, workloadIdentityNode],
         manifest.kind,
         container.name,
         "container",
-        `${documentIndex}:${podSpecPath.join(".")}:${collection}:${containerIdentity(container, index)}`,
+        `${workloadKey}:${podSpecPath.join(".")}:${collection}:${containerIdentity(container, index)}`,
       );
     }
 
@@ -221,11 +223,11 @@ function collectExplicitRootUsers(rule: RuleSpec, file: SourceFile): Detection[]
       document,
       podRunAsUserEvidence.value,
       podRunAsUserEvidence.primary,
-      [...policyNodes, ...activationNodes],
+      [...policyNodes, ...activationNodes, workloadIdentityNode],
       manifest.kind,
       undefined,
       "pod",
-      `${documentIndex}:${podSpecPath.join(".")}:pod:${inheritingContainerIdentity(inheritingContainers)}`,
+      `${workloadKey}:${podSpecPath.join(".")}:pod:${inheritingContainerIdentity(inheritingContainers)}`,
     );
   }
 
@@ -260,6 +262,14 @@ function valueAtPath(value: unknown, path: readonly string[]): unknown {
   return current;
 }
 
+function workloadIdentity(manifest: Record<string, unknown>, documentIndex: number): string {
+  const name = asRecord(manifest.metadata)?.name;
+  const prefix = `${String(manifest.apiVersion)}:${String(manifest.kind)}`;
+  return typeof name === "string" && name.length > 0
+    ? `${prefix}:name:${name}`
+    : `${prefix}:document:${documentIndex}`;
+}
+
 function containerIdentity(container: Record<string, unknown>, index: number): string {
   return typeof container.name === "string" && container.name.length > 0
     ? `name:${container.name}`
@@ -290,11 +300,36 @@ function fieldNodeEvidence(
   if (isAlias(parent)) {
     const resolved = parent.resolve(document);
     if (isMap(resolved)) {
-      return { value: resolved.get(field, true), primary: parent };
+      const inherited = fieldEvidenceFromMap(resolved, field, document, new Set());
+      return inherited.value === undefined ? inherited : { value: inherited.value, primary: parent };
     }
   }
+  if (isMap(parent)) return fieldEvidenceFromMap(parent, field, document, new Set());
   const value = document.getIn([...parentPath, field], true);
   return { value, primary: value };
+}
+
+function fieldEvidenceFromMap(
+  map: YAMLMap,
+  field: string,
+  document: Document,
+  seen: Set<unknown>,
+): { value: unknown; primary: unknown } {
+  if (seen.has(map)) return { value: undefined, primary: undefined };
+  seen.add(map);
+  if (map.has(field)) {
+    const value = map.get(field, true);
+    return { value, primary: value };
+  }
+  const merge = map.items.find((pair) =>
+    isScalar(pair.key) && (pair.key.value === "<<" || pair.key.source === "<<"))?.value;
+  for (const candidate of isSeq(merge) ? merge.items : [merge]) {
+    const resolved = isAlias(candidate) ? candidate.resolve(document) : candidate;
+    if (!isMap(resolved)) continue;
+    const inherited = fieldEvidenceFromMap(resolved, field, document, seen);
+    if (inherited.value !== undefined) return { value: inherited.value, primary: candidate };
+  }
+  return { value: undefined, primary: undefined };
 }
 
 function addRootDetection(

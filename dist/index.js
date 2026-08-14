@@ -7192,7 +7192,7 @@ var require_identity = __commonJS({
     var isMap2 = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === MAP;
     var isPair = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === PAIR;
     var isScalar2 = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === SCALAR;
-    var isSeq = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === SEQ;
+    var isSeq2 = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === SEQ;
     function isCollection(node) {
       if (node && typeof node === "object")
         switch (node[NODE_TYPE]) {
@@ -7229,7 +7229,7 @@ var require_identity = __commonJS({
     exports.isNode = isNode;
     exports.isPair = isPair;
     exports.isScalar = isScalar2;
-    exports.isSeq = isSeq;
+    exports.isSeq = isSeq2;
   }
 });
 
@@ -17569,7 +17569,7 @@ function collectExplicitRootUsers(rule, file) {
   const detections = [];
   let documents;
   try {
-    documents = (0, import_yaml2.parseAllDocuments)(file.source, { prettyErrors: false, uniqueKeys: true });
+    documents = (0, import_yaml2.parseAllDocuments)(file.source, { merge: true, prettyErrors: false, uniqueKeys: true });
   } catch {
     return [];
   }
@@ -17584,6 +17584,8 @@ function collectExplicitRootUsers(rule, file) {
     if (!manifest || typeof manifest.kind !== "string" || typeof manifest.apiVersion !== "string") continue;
     const podSpecPath = podSpecPathFor(manifest.apiVersion, manifest.kind);
     if (podSpecPath === void 0) continue;
+    const workloadKey = workloadIdentity(manifest, documentIndex);
+    const workloadIdentityNode = document.getIn(["metadata", "name"], true);
     const podSpec = asRecord(valueAtPath(manifest, podSpecPath));
     if (podSpec === void 0) continue;
     const podSecurityContextPath = [...podSpecPath, "securityContext"];
@@ -17611,11 +17613,11 @@ function collectExplicitRootUsers(rule, file) {
         document,
         runAsUser.value,
         runAsUser.primary,
-        policyNodes2,
+        [...policyNodes2, workloadIdentityNode],
         manifest.kind,
         container.name,
         "container",
-        `${documentIndex}:${podSpecPath.join(".")}:${collection}:${containerIdentity(container, index)}`
+        `${workloadKey}:${podSpecPath.join(".")}:${collection}:${containerIdentity(container, index)}`
       );
     }
     if (podRunAsUser !== 0 || containers.length === 0) continue;
@@ -17643,11 +17645,11 @@ function collectExplicitRootUsers(rule, file) {
       document,
       podRunAsUserEvidence.value,
       podRunAsUserEvidence.primary,
-      [...policyNodes, ...activationNodes],
+      [...policyNodes, ...activationNodes, workloadIdentityNode],
       manifest.kind,
       void 0,
       "pod",
-      `${documentIndex}:${podSpecPath.join(".")}:pod:${inheritingContainerIdentity(inheritingContainers)}`
+      `${workloadKey}:${podSpecPath.join(".")}:pod:${inheritingContainerIdentity(inheritingContainers)}`
     );
   }
   return detections;
@@ -17677,6 +17679,11 @@ function valueAtPath(value, path) {
   }
   return current;
 }
+function workloadIdentity(manifest, documentIndex) {
+  const name = asRecord(manifest.metadata)?.name;
+  const prefix = `${String(manifest.apiVersion)}:${String(manifest.kind)}`;
+  return typeof name === "string" && name.length > 0 ? `${prefix}:name:${name}` : `${prefix}:document:${documentIndex}`;
+}
 function containerIdentity(container, index) {
   return typeof container.name === "string" && container.name.length > 0 ? `name:${container.name}` : `index:${index}`;
 }
@@ -17688,11 +17695,29 @@ function fieldNodeEvidence(document, parentPath, field) {
   if ((0, import_yaml2.isAlias)(parent)) {
     const resolved = parent.resolve(document);
     if ((0, import_yaml2.isMap)(resolved)) {
-      return { value: resolved.get(field, true), primary: parent };
+      const inherited = fieldEvidenceFromMap(resolved, field, document, /* @__PURE__ */ new Set());
+      return inherited.value === void 0 ? inherited : { value: inherited.value, primary: parent };
     }
   }
+  if ((0, import_yaml2.isMap)(parent)) return fieldEvidenceFromMap(parent, field, document, /* @__PURE__ */ new Set());
   const value = document.getIn([...parentPath, field], true);
   return { value, primary: value };
+}
+function fieldEvidenceFromMap(map, field, document, seen) {
+  if (seen.has(map)) return { value: void 0, primary: void 0 };
+  seen.add(map);
+  if (map.has(field)) {
+    const value = map.get(field, true);
+    return { value, primary: value };
+  }
+  const merge = map.items.find((pair) => (0, import_yaml2.isScalar)(pair.key) && (pair.key.value === "<<" || pair.key.source === "<<"))?.value;
+  for (const candidate of (0, import_yaml2.isSeq)(merge) ? merge.items : [merge]) {
+    const resolved = (0, import_yaml2.isAlias)(candidate) ? candidate.resolve(document) : candidate;
+    if (!(0, import_yaml2.isMap)(resolved)) continue;
+    const inherited = fieldEvidenceFromMap(resolved, field, document, seen);
+    if (inherited.value !== void 0) return { value: inherited.value, primary: candidate };
+  }
+  return { value: void 0, primary: void 0 };
 }
 function addRootDetection(detections, rule, file, document, runAsUserNode, primaryEvidenceNode, policyNodes, workloadKind, containerName, source, semanticKey) {
   if (!isNumericZeroNode(runAsUserNode, document)) return;

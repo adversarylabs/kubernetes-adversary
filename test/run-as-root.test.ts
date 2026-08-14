@@ -257,6 +257,32 @@ spec:
   }
 });
 
+test("resolves runAsUser inherited through a YAML mapping merge and honors an explicit override", async () => {
+  const manifest = (override: string) => `apiVersion: v1
+kind: Pod
+metadata: {name: merged-security-context}
+rootContext: &rootContext {runAsUser: 0}
+spec:
+  containers:
+    - name: app
+      image: example/app:v1
+      securityContext:
+        <<: *rootContext
+${override}`;
+  const root = await temporaryTree({
+    "root.yaml": manifest(""),
+    "safe.yaml": manifest("        runAsUser: 10001\n"),
+  });
+  try {
+    const output = await createApp().run({ input: { source: { path: root } }, includeRawObservations: true });
+    const observations = output.rawObservations?.filter((item) => item.ruleId === ruleId) ?? [];
+    assert.equal(observations.length, 1);
+    assert.equal(observations[0]?.location?.snippet, "<<: *rootContext");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("resolves a mapping alias used as an inherited Pod security context", async () => {
   const root = await temporaryTree({
     "pod.yaml": `apiVersion: v1
@@ -519,6 +545,30 @@ spec:
     await writeFile(join(root, "pod.yaml"), `${prefix}${second}${first}`);
     const output = await changedReview(root);
     assert.equal(output.findings.some((finding) => finding.ruleId === ruleId), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("named workload identity is stable across documents and activates when replaced", async () => {
+  const manifest = (name: string) => `apiVersion: v1
+kind: Pod
+metadata: {name: ${name}}
+spec:
+  containers:
+    - name: worker
+      image: example/app:v1
+      securityContext: {runAsUser: 0}
+`;
+  const root = await gitRepository(`${manifest("first")}---\n${manifest("second")}`);
+  try {
+    await writeFile(join(root, "pod.yaml"), `${manifest("second")}---\n${manifest("first")}`);
+    let output = await changedReview(root);
+    assert.equal(output.findings.some((finding) => finding.ruleId === ruleId), false);
+
+    await writeFile(join(root, "pod.yaml"), `${manifest("replacement")}---\n${manifest("second")}`);
+    output = await changedReview(root);
+    assert.equal(output.findings.some((finding) => finding.ruleId === ruleId), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
