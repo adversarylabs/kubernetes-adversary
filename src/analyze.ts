@@ -76,6 +76,10 @@ function evaluate(rule: RuleSpec, sources: SourceFile[], allPaths: string[]): De
     return matchingSources.flatMap((file) => findSelectorTemplateMismatches(rule, file));
   }
 
+  if (match.kind === "explicit-run-as-root") {
+    return matchingSources.flatMap((file) => findExplicitRootUsers(rule, file));
+  }
+
   if (match.kind === "missing-content") {
     return matchingSources.flatMap((file) => {
       if (!test(file.source, match.trigger) || test(file.source, match.required)) return [];
@@ -106,6 +110,105 @@ function evaluate(rule: RuleSpec, sources: SourceFile[], allPaths: string[]): De
 }
 
 const SELECTOR_WORKLOADS = new Set(["DaemonSet", "Deployment", "ReplicaSet", "StatefulSet"]);
+const TEMPLATE_WORKLOADS = new Set(["DaemonSet", "Deployment", "Job", "ReplicaSet", "ReplicationController", "StatefulSet"]);
+const CONTAINER_COLLECTIONS = ["containers", "initContainers", "ephemeralContainers"] as const;
+
+function findExplicitRootUsers(rule: RuleSpec, file: SourceFile): Detection[] {
+  const detections: Detection[] = [];
+  let documents;
+  try {
+    documents = parseAllDocuments(file.source, { prettyErrors: false, uniqueKeys: true });
+  } catch {
+    return [];
+  }
+
+  for (const document of documents) {
+    if (document.errors.length > 0) continue;
+    let manifest: Record<string, unknown> | undefined;
+    try {
+      manifest = asRecord(document.toJS({ maxAliasCount: 100 }));
+    } catch {
+      continue;
+    }
+    if (!manifest || typeof manifest.kind !== "string") continue;
+    const podSpecPath = podSpecPathFor(manifest.kind);
+    if (podSpecPath === undefined) continue;
+    const podSpec = asRecord(valueAtPath(manifest, podSpecPath));
+    if (podSpec === undefined) continue;
+
+    const podSecurityContext = asRecord(podSpec.securityContext);
+    const podRunAsUser = podSecurityContext?.runAsUser;
+    const podRunAsNonRoot = podSecurityContext?.runAsNonRoot;
+    const containers = CONTAINER_COLLECTIONS.flatMap((collection) => {
+      const value = podSpec[collection];
+      return Array.isArray(value)
+        ? value.map((container, index) => ({ collection, index, container: asRecord(container) })).filter(
+          (entry): entry is { collection: typeof collection; index: number; container: Record<string, unknown> } =>
+            entry.container !== undefined,
+        )
+        : [];
+    });
+
+    for (const { collection, index, container } of containers) {
+      const securityContext = asRecord(container.securityContext);
+      const effectiveRunAsNonRoot = securityContext?.runAsNonRoot ?? podRunAsNonRoot;
+      if (securityContext?.runAsUser !== 0 || effectiveRunAsNonRoot === true) continue;
+      const path = [...podSpecPath, collection, index, "securityContext", "runAsUser"];
+      addRootDetection(detections, rule, file, document.getIn(path, true), manifest.kind, container.name, "container");
+    }
+
+    if (podRunAsUser !== 0 || podRunAsNonRoot === true || containers.length === 0) continue;
+    const inheritsRoot = containers.some(({ container }) => {
+      const securityContext = asRecord(container.securityContext);
+      return securityContext?.runAsUser === undefined && securityContext?.runAsNonRoot !== true;
+    });
+    if (!inheritsRoot) continue;
+    const path = [...podSpecPath, "securityContext", "runAsUser"];
+    addRootDetection(detections, rule, file, document.getIn(path, true), manifest.kind, undefined, "pod");
+  }
+
+  return detections;
+}
+
+function podSpecPathFor(kind: string): Array<string> | undefined {
+  if (kind === "Pod") return ["spec"];
+  if (kind === "PodTemplate") return ["template", "spec"];
+  if (kind === "CronJob") return ["spec", "jobTemplate", "spec", "template", "spec"];
+  if (TEMPLATE_WORKLOADS.has(kind)) return ["spec", "template", "spec"];
+  return undefined;
+}
+
+function valueAtPath(value: unknown, path: readonly string[]): unknown {
+  let current = value;
+  for (const segment of path) {
+    current = asRecord(current)?.[segment];
+  }
+  return current;
+}
+
+function addRootDetection(
+  detections: Detection[],
+  rule: RuleSpec,
+  file: SourceFile,
+  node: unknown,
+  workloadKind: string,
+  containerName: unknown,
+  source: "container" | "pod",
+): void {
+  if (!isScalar(node) || node.value !== 0 || node.range === null || node.range === undefined) return;
+  const line = lineAtIndex(file.source, node.range[0]);
+  if (file.status === "modified" && !file.changedLines.has(line)) return;
+  const name = typeof containerName === "string" ? containerName : undefined;
+  detections.push({
+    rule,
+    file: file.path,
+    ...locateFromIndex(file.source, node.range[0]),
+    label: source === "container" && name !== undefined
+      ? `Container ${name} explicitly sets runAsUser to UID 0`
+      : `${workloadKind} explicitly sets runAsUser to UID 0`,
+    data: { workloadKind, containerName: name, source, runAsUser: 0 },
+  });
+}
 
 function findSelectorTemplateMismatches(rule: RuleSpec, file: SourceFile): Detection[] {
   const detections: Detection[] = [];

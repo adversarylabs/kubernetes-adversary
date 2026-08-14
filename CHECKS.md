@@ -81,10 +81,10 @@ Public grounding: Kubernetes security documentation, NSA/CISA Kubernetes Hardeni
 
 | | |
 | --- | --- |
-| **What** | Container explicitly runs as UID 0 without justification markers |
+| **What** | A Pod or Pod-template workload explicitly selects UID 0 for an effective container security context |
 | **Why** | Root in container increases escape impact |
-| **Looks for** | `runAsUser: 0` or `runAsNonRoot: false` |
-| **Stays quiet when** | `runAsNonRoot: true` or `runAsUser` ≥ 1; absence alone is medium-only (many charts omit—prefer fire when combined with writable root FS or privileged-adjacent settings) |
+| **Looks for** | Numeric `runAsUser: 0` on a container, init container, ephemeral container, or an inherited Pod security context in known Pod and Pod-template workload kinds |
+| **Stays quiet when** | `runAsNonRoot: false` appears by itself (it disables enforcement but does not select UID 0); `runAsNonRoot: true` rejects the root setting; every container overrides a Pod-level UID 0 with a non-root UID; or the text appears in comments, strings, Helm values, or non-workload YAML |
 | **Public examples** | Pod Security Standards restricted profile |
 | **Remediation** | Run as non-root; set `runAsNonRoot: true` |
 

@@ -3647,12 +3647,7 @@ var require_fast_uri = __commonJS({
     }
     function resolve3(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
-      const { parsed: baseParsed, malformedAuthorityOrPort: baseMalformed } = parseWithStatus(baseURI, schemelessOptions);
-      const { parsed: relativeParsed, malformedAuthorityOrPort: relativeMalformed } = parseWithStatus(relativeURI, schemelessOptions);
-      if (baseMalformed || relativeMalformed) {
-        throw new Error(baseParsed.error || relativeParsed.error || "URI is malformed.");
-      }
-      const resolved = resolveComponent(baseParsed, relativeParsed, schemelessOptions, true);
+      const resolved = resolveComponent(parse(baseURI, schemelessOptions), parse(relativeURI, schemelessOptions), schemelessOptions, true);
       schemelessOptions.skipEscape = true;
       return serialize(resolved, schemelessOptions);
     }
@@ -3778,7 +3773,6 @@ var require_fast_uri = __commonJS({
     }
     var URI_PARSE = /^(?:([^#/:?]+):)?(?:\/\/((?:([^#/?@]*)@)?(\[[^#/?\]]+\]|[^#/:?]*)(?::(\d*))?))?([^#?]*)(?:\?([^#]*))?(?:#((?:.|[\n\r])*))?/u;
     var AUTHORITY_PREFIX = /^(?:[^#/:?]+:)?\/\/([^/?#]*)/;
-    var AUTHORITY_INTRODUCER_REGION = /^(?:[^#/:?]+:)?([/\\\t\n\r]*)/;
     function getParseError(parsed, matches) {
       if (matches[2] !== void 0 && parsed.path && parsed.path[0] !== "/") {
         return 'URI path must start with "/" when authority is present.';
@@ -3812,20 +3806,6 @@ var require_fast_uri = __commonJS({
       if (authorityMatch !== null && authorityMatch[1].indexOf("\\") !== -1) {
         parsed.error = "URI authority must not contain a literal backslash.";
         malformedAuthorityOrPort = true;
-      }
-      const introducerMatch = uri.match(AUTHORITY_INTRODUCER_REGION);
-      if (introducerMatch !== null) {
-        const region = introducerMatch[1];
-        const normalizedRegion = region.replace(/[\t\n\r]/g, "");
-        if (normalizedRegion.length >= 2) {
-          if (normalizedRegion.slice(0, 2) !== "//") {
-            parsed.error = parsed.error || "URI authority must not contain a literal backslash.";
-            malformedAuthorityOrPort = true;
-          } else if (region.length !== normalizedRegion.length) {
-            parsed.error = parsed.error || "URI authority introducer must not contain whitespace.";
-            malformedAuthorityOrPort = true;
-          }
-        }
       }
       const matches = uri.match(URI_PARSE);
       if (matches) {
@@ -17252,22 +17232,11 @@ var spec = {
         "root"
       ],
       "match": {
-        "kind": "content",
+        "kind": "explicit-run-as-root",
         "files": [
           "**/*.yml",
           "**/*.yaml"
-        ],
-        "pattern": {
-          "pattern": "(?:runAsUser:\\s*0\\b|runAsNonRoot:\\s*false)",
-          "flags": "i"
-        },
-        "anchors": [
-          {
-            "pattern": "(?:runAsUser:\\s*0\\b|runAsNonRoot:\\s*false)",
-            "flags": "i"
-          }
-        ],
-        "requires": []
+        ]
       }
     },
     {
@@ -17532,6 +17501,9 @@ function evaluate(rule, sources, allPaths) {
   if (match.kind === "selector-template-mismatch") {
     return matchingSources.flatMap((file) => findSelectorTemplateMismatches(rule, file));
   }
+  if (match.kind === "explicit-run-as-root") {
+    return matchingSources.flatMap((file) => findExplicitRootUsers(rule, file));
+  }
   if (match.kind === "missing-content") {
     return matchingSources.flatMap((file) => {
       if (!test(file.source, match.trigger) || test(file.source, match.required)) return [];
@@ -17557,6 +17529,83 @@ function evaluate(rule, sources, allPaths) {
   });
 }
 var SELECTOR_WORKLOADS = /* @__PURE__ */ new Set(["DaemonSet", "Deployment", "ReplicaSet", "StatefulSet"]);
+var TEMPLATE_WORKLOADS = /* @__PURE__ */ new Set(["DaemonSet", "Deployment", "Job", "ReplicaSet", "ReplicationController", "StatefulSet"]);
+var CONTAINER_COLLECTIONS = ["containers", "initContainers", "ephemeralContainers"];
+function findExplicitRootUsers(rule, file) {
+  const detections = [];
+  let documents;
+  try {
+    documents = (0, import_yaml2.parseAllDocuments)(file.source, { prettyErrors: false, uniqueKeys: true });
+  } catch {
+    return [];
+  }
+  for (const document of documents) {
+    if (document.errors.length > 0) continue;
+    let manifest;
+    try {
+      manifest = asRecord(document.toJS({ maxAliasCount: 100 }));
+    } catch {
+      continue;
+    }
+    if (!manifest || typeof manifest.kind !== "string") continue;
+    const podSpecPath = podSpecPathFor(manifest.kind);
+    if (podSpecPath === void 0) continue;
+    const podSpec = asRecord(valueAtPath(manifest, podSpecPath));
+    if (podSpec === void 0) continue;
+    const podSecurityContext = asRecord(podSpec.securityContext);
+    const podRunAsUser = podSecurityContext?.runAsUser;
+    const podRunAsNonRoot = podSecurityContext?.runAsNonRoot;
+    const containers = CONTAINER_COLLECTIONS.flatMap((collection) => {
+      const value = podSpec[collection];
+      return Array.isArray(value) ? value.map((container, index) => ({ collection, index, container: asRecord(container) })).filter(
+        (entry) => entry.container !== void 0
+      ) : [];
+    });
+    for (const { collection, index, container } of containers) {
+      const securityContext = asRecord(container.securityContext);
+      const effectiveRunAsNonRoot = securityContext?.runAsNonRoot ?? podRunAsNonRoot;
+      if (securityContext?.runAsUser !== 0 || effectiveRunAsNonRoot === true) continue;
+      const path2 = [...podSpecPath, collection, index, "securityContext", "runAsUser"];
+      addRootDetection(detections, rule, file, document.getIn(path2, true), manifest.kind, container.name, "container");
+    }
+    if (podRunAsUser !== 0 || podRunAsNonRoot === true || containers.length === 0) continue;
+    const inheritsRoot = containers.some(({ container }) => {
+      const securityContext = asRecord(container.securityContext);
+      return securityContext?.runAsUser === void 0 && securityContext?.runAsNonRoot !== true;
+    });
+    if (!inheritsRoot) continue;
+    const path = [...podSpecPath, "securityContext", "runAsUser"];
+    addRootDetection(detections, rule, file, document.getIn(path, true), manifest.kind, void 0, "pod");
+  }
+  return detections;
+}
+function podSpecPathFor(kind) {
+  if (kind === "Pod") return ["spec"];
+  if (kind === "PodTemplate") return ["template", "spec"];
+  if (kind === "CronJob") return ["spec", "jobTemplate", "spec", "template", "spec"];
+  if (TEMPLATE_WORKLOADS.has(kind)) return ["spec", "template", "spec"];
+  return void 0;
+}
+function valueAtPath(value, path) {
+  let current = value;
+  for (const segment of path) {
+    current = asRecord(current)?.[segment];
+  }
+  return current;
+}
+function addRootDetection(detections, rule, file, node, workloadKind, containerName, source) {
+  if (!(0, import_yaml2.isScalar)(node) || node.value !== 0 || node.range === null || node.range === void 0) return;
+  const line = lineAtIndex(file.source, node.range[0]);
+  if (file.status === "modified" && !file.changedLines.has(line)) return;
+  const name = typeof containerName === "string" ? containerName : void 0;
+  detections.push({
+    rule,
+    file: file.path,
+    ...locateFromIndex(file.source, node.range[0]),
+    label: source === "container" && name !== void 0 ? `Container ${name} explicitly sets runAsUser to UID 0` : `${workloadKind} explicitly sets runAsUser to UID 0`,
+    data: { workloadKind, containerName: name, source, runAsUser: 0 }
+  });
+}
 function findSelectorTemplateMismatches(rule, file) {
   const detections = [];
   let documents;
@@ -17766,7 +17815,7 @@ function matchesGlob(path, glob) {
 
 // src/index.ts
 function createApp() {
-  const app = new Adversary({ name: "kubernetes", version: "0.0.11", review: { maximumFindings: 8 } });
+  const app = new Adversary({ name: "kubernetes", version: "0.0.12", review: { maximumFindings: 8 } });
   registerRules(app);
   app.rule("kubernetes.review", async (ctx) => analyzeRepository(ctx));
   return app;
