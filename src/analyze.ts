@@ -225,8 +225,7 @@ function collectExplicitRootUsers(rule: RuleSpec, file: SourceFile): Detection[]
       manifest.kind,
       undefined,
       "pod",
-      `${documentIndex}:${podSpecPath.join(".")}:pod:${inheritingContainers
-        .map(({ collection, index, container }) => `${collection}:${containerIdentity(container, index)}`).join(",")}`,
+      `${documentIndex}:${podSpecPath.join(".")}:pod:${inheritingContainerIdentity(inheritingContainers)}`,
     );
   }
 
@@ -265,6 +264,21 @@ function containerIdentity(container: Record<string, unknown>, index: number): s
   return typeof container.name === "string" && container.name.length > 0
     ? `name:${container.name}`
     : `index:${index}`;
+}
+
+function inheritingContainerIdentity(
+  containers: Array<{
+    collection: typeof CONTAINER_COLLECTIONS[number];
+    index: number;
+    container: Record<string, unknown>;
+  }>,
+): string {
+  return CONTAINER_COLLECTIONS.flatMap((collection) => containers
+    .filter((entry) => entry.collection === collection)
+    .map(({ index, container }) => containerIdentity(container, index))
+    .sort()
+    .map((identity) => `${collection}:${identity}`))
+    .join(",");
 }
 
 function fieldNodeEvidence(

@@ -17647,7 +17647,7 @@ function collectExplicitRootUsers(rule, file) {
       manifest.kind,
       void 0,
       "pod",
-      `${documentIndex}:${podSpecPath.join(".")}:pod:${inheritingContainers.map(({ collection, index, container }) => `${collection}:${containerIdentity(container, index)}`).join(",")}`
+      `${documentIndex}:${podSpecPath.join(".")}:pod:${inheritingContainerIdentity(inheritingContainers)}`
     );
   }
   return detections;
@@ -17679,6 +17679,9 @@ function valueAtPath(value, path) {
 }
 function containerIdentity(container, index) {
   return typeof container.name === "string" && container.name.length > 0 ? `name:${container.name}` : `index:${index}`;
+}
+function inheritingContainerIdentity(containers) {
+  return CONTAINER_COLLECTIONS.flatMap((collection) => containers.filter((entry) => entry.collection === collection).map(({ index, container }) => containerIdentity(container, index)).sort().map((identity) => `${collection}:${identity}`)).join(",");
 }
 function fieldNodeEvidence(document, parentPath, field) {
   const parent = document.getIn(parentPath, true);

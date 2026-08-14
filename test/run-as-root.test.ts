@@ -500,6 +500,30 @@ spec:
   }
 });
 
+test("reordering named containers that inherit the same Pod UID stays quiet", async () => {
+  const prefix = `apiVersion: v1
+kind: Pod
+metadata: {name: reordered-inheritors}
+spec:
+  securityContext: {runAsUser: 0}
+  containers:
+`;
+  const first = `    - name: first
+      image: example/first:v1
+`;
+  const second = `    - name: second
+      image: example/second:v1
+`;
+  const root = await gitRepository(`${prefix}${first}${second}`);
+  try {
+    await writeFile(join(root, "pod.yaml"), `${prefix}${second}${first}`);
+    const output = await changedReview(root);
+    assert.equal(output.findings.some((finding) => finding.ruleId === ruleId), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("container names keep explicit-root identity stable across list insertion", async () => {
   const prefix = `apiVersion: v1
 kind: Pod
