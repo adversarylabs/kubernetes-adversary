@@ -161,6 +161,145 @@ spec:
   }
 });
 
+test("container runAsNonRoot false overrides Pod enforcement while retaining an inherited UID", async () => {
+  const root = await temporaryTree({
+    "pods.yaml": `apiVersion: v1
+kind: Pod
+metadata: {name: inherited-override}
+spec:
+  securityContext: {runAsUser: 0, runAsNonRoot: true}
+  containers:
+    - name: app
+      image: example/app:v1
+      securityContext: {runAsNonRoot: false}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: direct-override}
+spec:
+  securityContext: {runAsNonRoot: true}
+  containers:
+    - name: app
+      image: example/app:v1
+      securityContext: {runAsUser: 0, runAsNonRoot: false}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: non-root-uid}
+spec:
+  securityContext: {runAsUser: 0}
+  containers:
+    - name: app
+      image: example/app:v1
+      securityContext: {runAsUser: 10001, runAsNonRoot: false}
+`,
+  });
+  try {
+    const output = await createApp().run({ input: { source: { path: root } }, includeRawObservations: true });
+    const observations = output.rawObservations?.filter((item) => item.ruleId === ruleId) ?? [];
+    assert.equal(observations.length, 2);
+    assert.equal(observations.every((item) => item.location?.snippet.includes("runAsUser: 0")), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("resolves a numeric zero through a YAML alias and anchors the alias use", async () => {
+  const root = await temporaryTree({
+    "pod.yaml": `apiVersion: v1
+kind: Pod
+metadata: {name: aliases}
+spec:
+  containers:
+    - name: anchor
+      image: example/app:v1
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: &root 0
+    - name: inherited
+      image: example/app:v1
+      securityContext:
+        runAsNonRoot: false
+        runAsUser: *root
+`,
+  });
+  try {
+    const output = await createApp().run({ input: { source: { path: root } }, includeRawObservations: true });
+    const observations = output.rawObservations?.filter((item) => item.ruleId === ruleId) ?? [];
+    assert.equal(observations.length, 1);
+    assert.equal(observations[0]?.location?.snippet, "runAsUser: *root");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("resolves a mapping alias used directly as a container security context", async () => {
+  const root = await temporaryTree({
+    "pod.yaml": `apiVersion: v1
+kind: Pod
+metadata: {name: mapping-alias}
+spec:
+  securityContext: &rootContext
+    runAsUser: 0
+  containers:
+    - name: explicit-alias
+      image: example/app:v1
+      securityContext: *rootContext
+`,
+  });
+  try {
+    const output = await createApp().run({ input: { source: { path: root } }, includeRawObservations: true });
+    const observation = output.rawObservations?.find((item) => item.ruleId === ruleId);
+    assert.equal(observation?.location?.snippet, "securityContext: *rootContext");
+    assert.equal((observation as { data?: { containerName?: string } } | undefined)?.data?.containerName, "explicit-alias");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("resolves a mapping alias used as an inherited Pod security context", async () => {
+  const root = await temporaryTree({
+    "pod.yaml": `apiVersion: v1
+kind: Pod
+metadata: {name: pod-mapping-alias}
+rootContext: &rootContext
+  runAsUser: 0
+spec:
+  securityContext: *rootContext
+  containers:
+    - name: inherited
+      image: example/app:v1
+`,
+  });
+  try {
+    const output = await createApp().run({ input: { source: { path: root } }, includeRawObservations: true });
+    const observation = output.rawObservations?.find((item) => item.ruleId === ruleId);
+    assert.equal(observation?.location?.snippet, "securityContext: *rootContext");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("recognizes YAML numeric zero forms but not quoted strings", async () => {
+  for (const value of ["0", "00", "0x0", "0o0", "+0", "-0", "0.0"]) {
+    const root = await temporaryTree({ "pod.yaml": workload(value, "numeric") });
+    try {
+      const output = await createApp().run({ input: { source: { path: root } } });
+      assert.equal(output.findings.some((finding) => finding.ruleId === ruleId), true, value);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+
+  const root = await temporaryTree({ "pod.yaml": workload('"0"', "quoted") });
+  try {
+    const output = await createApp().run({ input: { source: { path: root } } });
+    assert.equal(output.findings.some((finding) => finding.ruleId === ruleId), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("modified findings require a changed semantic runAsUser line", async () => {
   const root = await gitRepository(workload("10001", "old note"));
   try {
@@ -201,6 +340,242 @@ spec:
       .replace('value: "runAsUser: 10001"', 'value: "runAsUser: 0"')
       .replace("# runAsUser: 10001", "# runAsUser: 0"));
     const output = await changedReview(root);
+    assert.equal(output.findings.some((finding) => finding.ruleId === ruleId), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a changed container enforcement override exposes an inherited Pod UID", async () => {
+  const original = `apiVersion: v1
+kind: Pod
+metadata: {name: changed-enforcement}
+spec:
+  securityContext: {runAsUser: 0, runAsNonRoot: true}
+  containers:
+    - name: app
+      image: example/app:v1
+      securityContext: {runAsNonRoot: true}
+`;
+  const root = await gitRepository(original);
+  try {
+    await writeFile(join(root, "pod.yaml"), original.replace(
+      "securityContext: {runAsNonRoot: true}",
+      "securityContext: {runAsNonRoot: false}",
+    ));
+    const output = await changedReview(root);
+    const observation = output.rawObservations?.find((item) => item.ruleId === ruleId);
+    assert.equal(observation?.location?.snippet, "securityContext: {runAsNonRoot: false}");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a redundant false override and a deletion-only UID inheritance stay quiet", async () => {
+  const redundantFalse = `apiVersion: v1
+kind: Pod
+metadata: {name: redundant-false}
+spec:
+  securityContext: {runAsUser: 0}
+  containers:
+    - name: app
+      image: example/app:v1
+      securityContext: {}
+`;
+  const redundantRoot = await gitRepository(redundantFalse);
+  try {
+    await writeFile(join(redundantRoot, "pod.yaml"), redundantFalse.replace(
+      "securityContext: {}",
+      "securityContext: {runAsNonRoot: false}",
+    ));
+    const output = await changedReview(redundantRoot);
+    assert.equal(output.findings.some((finding) => finding.ruleId === ruleId), false);
+  } finally {
+    await rm(redundantRoot, { recursive: true, force: true });
+  }
+
+  const explicitUID = `apiVersion: v1
+kind: Pod
+metadata: {name: deleted-override}
+spec:
+  securityContext: {runAsUser: 0}
+  containers:
+    - name: app
+      image: example/app:v1
+      securityContext: {runAsUser: 10001}
+`;
+  const deletionRoot = await gitRepository(explicitUID);
+  try {
+    await writeFile(join(deletionRoot, "pod.yaml"), explicitUID.replace(
+      "securityContext: {runAsUser: 10001}",
+      "securityContext: {}",
+    ));
+    const output = await changedReview(deletionRoot);
+    assert.equal(output.findings.some((finding) => finding.ruleId === ruleId), false);
+  } finally {
+    await rm(deletionRoot, { recursive: true, force: true });
+  }
+});
+
+test("Helm values filenames stay quiet even when the document mimics a Pod", async () => {
+  for (const path of ["values.yaml", "values-production.yml"]) {
+    const root = await temporaryTree({ [path]: workload("0", "helm-values") });
+    try {
+      const output = await createApp().run({ input: { source: { path: root } } });
+      assert.equal(output.findings.some((finding) => finding.ruleId === ruleId), false, path);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("a changed Pod-level enforcement policy exposes an inherited UID 0", async () => {
+  const manifest = (policy: string) => `apiVersion: v1
+kind: Pod
+metadata: {name: changed-pod-policy}
+spec:
+  securityContext:
+    runAsUser: 0
+    runAsNonRoot: ${policy}
+  containers:
+    - name: app
+      image: example/app:v1
+`;
+  const root = await gitRepository(manifest("true"));
+  try {
+    await writeFile(join(root, "pod.yaml"), manifest("false"));
+    const output = await changedReview(root);
+    const observation = output.rawObservations?.find((item) => item.ruleId === ruleId);
+    assert.equal(observation?.location?.snippet, "runAsNonRoot: false");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a newly exposed inheriting container reports even when another container was already exposed", async () => {
+  const manifest = (secondPolicy: string) => `apiVersion: v1
+kind: Pod
+metadata: {name: partial-policy-change}
+spec:
+  securityContext: {runAsUser: 0}
+  containers:
+    - name: already-exposed
+      image: example/app:v1
+    - name: newly-exposed
+      image: example/app:v1
+      securityContext: {runAsNonRoot: ${secondPolicy}}
+`;
+  const root = await gitRepository(manifest("true"));
+  try {
+    await writeFile(join(root, "pod.yaml"), manifest("false"));
+    const output = await changedReview(root);
+    const observation = output.rawObservations?.find((item) => item.ruleId === ruleId);
+    assert.equal(observation?.location?.snippet, "securityContext: {runAsNonRoot: false}");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an added container inheriting an existing Pod UID 0 anchors the new container", async () => {
+  const original = `apiVersion: v1
+kind: Pod
+metadata: {name: added-inheritor}
+spec:
+  securityContext: {runAsUser: 0}
+  containers:
+    - name: existing
+      image: example/app:v1
+      securityContext: {runAsUser: 10001}
+`;
+  const root = await gitRepository(original);
+  try {
+    await writeFile(join(root, "pod.yaml"), `${original}    - name: added
+      image: example/sidecar:v1
+`);
+    const output = await changedReview(root);
+    const observation = output.rawObservations?.find((item) => item.ruleId === ruleId);
+    assert.match(observation?.location?.snippet ?? "", /name: added|image: example\/sidecar/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("container names keep explicit-root identity stable across list insertion", async () => {
+  const prefix = `apiVersion: v1
+kind: Pod
+metadata: {name: inserted-root}
+spec:
+  containers:
+`;
+  const legacy = `    - name: legacy
+      image: example/old:v1
+      securityContext: {runAsUser: 0}
+`;
+  const added = `    - name: added
+      image: example/new:v1
+      securityContext: {runAsUser: 0}
+`;
+  const root = await gitRepository(`${prefix}${legacy}`);
+  try {
+    await writeFile(join(root, "pod.yaml"), `${prefix}${added}${legacy}`);
+    const output = await changedReview(root);
+    const observations = output.rawObservations?.filter((item) => item.ruleId === ruleId) ?? [];
+    assert.equal(observations.length, 1);
+    assert.equal((observations[0] as { data?: { containerName?: string } } | undefined)?.data?.containerName, "added");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("comment-only edits on existing root policy remain quiet by prior YAML semantics", async () => {
+  const original = workload("0 # old explanation", "existing-root");
+  const root = await gitRepository(original);
+  try {
+    await writeFile(join(root, "pod.yaml"), original.replace("# old explanation", "# clearer explanation"));
+    const output = await changedReview(root);
+    assert.equal(output.findings.some((finding) => finding.ruleId === ruleId), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a changed YAML anchor definition activates and anchors an unchanged UID alias use", async () => {
+  const manifest = (uid: number) => `apiVersion: v1
+kind: Pod
+metadata: {name: changed-alias}
+spec:
+  securityContext: {runAsUser: &uid ${uid}}
+  containers:
+    - name: app
+      image: example/app:v1
+      securityContext: {runAsUser: *uid}
+`;
+  const root = await gitRepository(manifest(10001));
+  try {
+    await writeFile(join(root, "pod.yaml"), manifest(0));
+    const output = await changedReview(root);
+    const observation = output.rawObservations?.find((item) => item.ruleId === ruleId);
+    assert.equal(observation?.location?.snippet, "securityContext: {runAsUser: &uid 0}");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("built-in kind names under custom API groups remain out of scope", async () => {
+  const root = await temporaryTree({
+    "custom.yaml": `apiVersion: widgets.example/v1
+kind: Deployment
+metadata: {name: custom}
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          securityContext: {runAsUser: 0}
+`,
+  });
+  try {
+    const output = await createApp().run({ input: { source: { path: root } } });
     assert.equal(output.findings.some((finding) => finding.ruleId === ruleId), false);
   } finally {
     await rm(root, { recursive: true, force: true });

@@ -42,8 +42,9 @@ export function observationFor(detection: { rule: RuleSpec; file: string; line: 
     severityAggregation: "highest",
     location: { file: detection.file, line: detection.line, label: detection.label, snippet: detection.snippet },
     evidence: { label: detection.label, ...detection.data },
+    data: detection.data,
     tags: rule.tags,
-  };
+  } as ObservationInit;
 }
 
 export { Severity };

@@ -83,8 +83,8 @@ Public grounding: Kubernetes security documentation, NSA/CISA Kubernetes Hardeni
 | --- | --- |
 | **What** | A Pod or Pod-template workload explicitly selects UID 0 for an effective container security context |
 | **Why** | Root in container increases escape impact |
-| **Looks for** | Numeric `runAsUser: 0` on a container, init container, ephemeral container, or an inherited Pod security context in known Pod and Pod-template workload kinds |
-| **Stays quiet when** | `runAsNonRoot: false` appears by itself (it disables enforcement but does not select UID 0); `runAsNonRoot: true` rejects the root setting; every container overrides a Pod-level UID 0 with a non-root UID; or the text appears in comments, strings, Helm values, or non-workload YAML |
+| **Looks for** | Numeric `runAsUser: 0` on a container, init container, ephemeral container, or an inherited Pod security context in group-matched built-ins: core/v1 Pod, PodTemplate, and ReplicationController; apps workloads; and batch Job/CronJob |
+| **Stays quiet when** | `runAsNonRoot: false` appears by itself (it disables enforcement but does not select UID 0); `runAsNonRoot: true` rejects the root setting; every container overrides a Pod-level UID 0 with a non-root UID; the kind is reused by a custom API group; or the text appears in comments, strings, Helm values, or non-workload YAML |
 | **Public examples** | Pod Security Standards restricted profile |
 | **Remediation** | Run as non-root; set `runAsNonRoot: true` |
 

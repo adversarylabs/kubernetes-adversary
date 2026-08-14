@@ -3647,7 +3647,12 @@ var require_fast_uri = __commonJS({
     }
     function resolve3(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
-      const resolved = resolveComponent(parse(baseURI, schemelessOptions), parse(relativeURI, schemelessOptions), schemelessOptions, true);
+      const { parsed: baseParsed, malformedAuthorityOrPort: baseMalformed } = parseWithStatus(baseURI, schemelessOptions);
+      const { parsed: relativeParsed, malformedAuthorityOrPort: relativeMalformed } = parseWithStatus(relativeURI, schemelessOptions);
+      if (baseMalformed || relativeMalformed) {
+        throw new Error(baseParsed.error || relativeParsed.error || "URI is malformed.");
+      }
+      const resolved = resolveComponent(baseParsed, relativeParsed, schemelessOptions, true);
       schemelessOptions.skipEscape = true;
       return serialize(resolved, schemelessOptions);
     }
@@ -3773,6 +3778,7 @@ var require_fast_uri = __commonJS({
     }
     var URI_PARSE = /^(?:([^#/:?]+):)?(?:\/\/((?:([^#/?@]*)@)?(\[[^#/?\]]+\]|[^#/:?]*)(?::(\d*))?))?([^#?]*)(?:\?([^#]*))?(?:#((?:.|[\n\r])*))?/u;
     var AUTHORITY_PREFIX = /^(?:[^#/:?]+:)?\/\/([^/?#]*)/;
+    var AUTHORITY_INTRODUCER_REGION = /^(?:[^#/:?]+:)?([/\\\t\n\r]*)/;
     function getParseError(parsed, matches) {
       if (matches[2] !== void 0 && parsed.path && parsed.path[0] !== "/") {
         return 'URI path must start with "/" when authority is present.';
@@ -3806,6 +3812,20 @@ var require_fast_uri = __commonJS({
       if (authorityMatch !== null && authorityMatch[1].indexOf("\\") !== -1) {
         parsed.error = "URI authority must not contain a literal backslash.";
         malformedAuthorityOrPort = true;
+      }
+      const introducerMatch = uri.match(AUTHORITY_INTRODUCER_REGION);
+      if (introducerMatch !== null) {
+        const region = introducerMatch[1];
+        const normalizedRegion = region.replace(/[\t\n\r]/g, "");
+        if (normalizedRegion.length >= 2) {
+          if (normalizedRegion.slice(0, 2) !== "//") {
+            parsed.error = parsed.error || "URI authority must not contain a literal backslash.";
+            malformedAuthorityOrPort = true;
+          } else if (region.length !== normalizedRegion.length) {
+            parsed.error = parsed.error || "URI authority introducer must not contain whitespace.";
+            malformedAuthorityOrPort = true;
+          }
+        }
       }
       const matches = uri.match(URI_PARSE);
       if (matches) {
@@ -7167,9 +7187,9 @@ var require_identity = __commonJS({
     var SCALAR = /* @__PURE__ */ Symbol.for("yaml.scalar");
     var SEQ = /* @__PURE__ */ Symbol.for("yaml.seq");
     var NODE_TYPE = /* @__PURE__ */ Symbol.for("yaml.node.type");
-    var isAlias = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === ALIAS;
+    var isAlias2 = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === ALIAS;
     var isDocument = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === DOC;
-    var isMap = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === MAP;
+    var isMap2 = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === MAP;
     var isPair = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === PAIR;
     var isScalar2 = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === SCALAR;
     var isSeq = (node) => !!node && typeof node === "object" && node[NODE_TYPE] === SEQ;
@@ -7202,10 +7222,10 @@ var require_identity = __commonJS({
     exports.SCALAR = SCALAR;
     exports.SEQ = SEQ;
     exports.hasAnchor = hasAnchor;
-    exports.isAlias = isAlias;
+    exports.isAlias = isAlias2;
     exports.isCollection = isCollection;
     exports.isDocument = isDocument;
-    exports.isMap = isMap;
+    exports.isMap = isMap2;
     exports.isNode = isNode;
     exports.isPair = isPair;
     exports.isScalar = isScalar2;
@@ -11315,9 +11335,9 @@ var require_resolve_flow_collection = __commonJS({
     var blockMsg = "Block collections are not allowed within flow collections";
     var isBlock = (token) => token && (token.type === "block-map" || token.type === "block-seq");
     function resolveFlowCollection({ composeNode, composeEmptyNode }, ctx, fc, onError, tag) {
-      const isMap = fc.start.source === "{";
-      const fcName = isMap ? "flow map" : "flow sequence";
-      const NodeClass = tag?.nodeClass ?? (isMap ? YAMLMap.YAMLMap : YAMLSeq.YAMLSeq);
+      const isMap2 = fc.start.source === "{";
+      const fcName = isMap2 ? "flow map" : "flow sequence";
+      const NodeClass = tag?.nodeClass ?? (isMap2 ? YAMLMap.YAMLMap : YAMLSeq.YAMLSeq);
       const coll = new NodeClass(ctx.schema);
       coll.flow = true;
       const atRoot = ctx.atRoot;
@@ -11353,7 +11373,7 @@ var require_resolve_flow_collection = __commonJS({
             offset = props.end;
             continue;
           }
-          if (!isMap && ctx.options.strict && utilContainsNewline.containsNewline(key))
+          if (!isMap2 && ctx.options.strict && utilContainsNewline.containsNewline(key))
             onError(
               key,
               // checked by containsNewline()
@@ -11393,7 +11413,7 @@ var require_resolve_flow_collection = __commonJS({
             }
           }
         }
-        if (!isMap && !sep3 && !props.found) {
+        if (!isMap2 && !sep3 && !props.found) {
           const valueNode = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, sep3, null, props, onError);
           coll.items.push(valueNode);
           offset = valueNode.range[2];
@@ -11416,7 +11436,7 @@ var require_resolve_flow_collection = __commonJS({
             startOnNewline: false
           });
           if (valueProps.found) {
-            if (!isMap && !props.found && ctx.options.strict) {
+            if (!isMap2 && !props.found && ctx.options.strict) {
               if (sep3)
                 for (const st of sep3) {
                   if (st === valueProps.found)
@@ -11448,7 +11468,7 @@ var require_resolve_flow_collection = __commonJS({
           const pair = new Pair.Pair(keyNode, valueNode);
           if (ctx.options.keepSourceTokens)
             pair.srcToken = collItem;
-          if (isMap) {
+          if (isMap2) {
             const map = coll;
             if (utilMapIncludes.mapIncludes(ctx, map.items, keyNode))
               onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique");
@@ -11464,7 +11484,7 @@ var require_resolve_flow_collection = __commonJS({
           offset = valueNode ? valueNode.range[2] : valueProps.end;
         }
       }
-      const expectedEnd = isMap ? "}" : "]";
+      const expectedEnd = isMap2 ? "}" : "]";
       const [ce, ...ee] = fc.end;
       let cePos = offset;
       if (ce?.source === expectedEnd)
@@ -17039,7 +17059,7 @@ function omitUndefined(value) {
 var import_yaml2 = __toESM(require_dist(), 1);
 import { execFile } from "node:child_process";
 import { readdir as readdir4 } from "node:fs/promises";
-import { join as join3, sep as sep2 } from "node:path";
+import { basename as basename2, join as join3, sep as sep2 } from "node:path";
 import { promisify } from "node:util";
 
 // src/spec.ts
@@ -17444,6 +17464,7 @@ function observationFor(detection) {
     severityAggregation: "highest",
     location: { file: detection.file, line: detection.line, label: detection.label, snippet: detection.snippet },
     evidence: { label: detection.label, ...detection.data },
+    data: detection.data,
     tags: rule.tags
   };
 }
@@ -17473,6 +17494,7 @@ async function analyzeRepository(ctx) {
     sources.push({
       path: file.path,
       source: file.content,
+      ...change.previousSource === void 0 ? {} : { previousSource: change.previousSource },
       status: change.status,
       changedLines: change.changedLines
     });
@@ -17529,9 +17551,21 @@ function evaluate(rule, sources, allPaths) {
   });
 }
 var SELECTOR_WORKLOADS = /* @__PURE__ */ new Set(["DaemonSet", "Deployment", "ReplicaSet", "StatefulSet"]);
-var TEMPLATE_WORKLOADS = /* @__PURE__ */ new Set(["DaemonSet", "Deployment", "Job", "ReplicaSet", "ReplicationController", "StatefulSet"]);
 var CONTAINER_COLLECTIONS = ["containers", "initContainers", "ephemeralContainers"];
 function findExplicitRootUsers(rule, file) {
+  if (isHelmValuesFile(file.path)) return [];
+  const current = collectExplicitRootUsers(rule, file);
+  if (file.status !== "modified" || file.previousSource === void 0) return current;
+  const previous = collectExplicitRootUsers(rule, {
+    path: file.path,
+    source: file.previousSource,
+    status: "repository",
+    changedLines: /* @__PURE__ */ new Set()
+  });
+  const previousKeys = new Set(previous.flatMap((detection) => detection.semanticKey === void 0 ? [] : [detection.semanticKey]));
+  return current.filter((detection) => detection.semanticKey === void 0 || !previousKeys.has(detection.semanticKey));
+}
+function collectExplicitRootUsers(rule, file) {
   const detections = [];
   let documents;
   try {
@@ -17539,7 +17573,7 @@ function findExplicitRootUsers(rule, file) {
   } catch {
     return [];
   }
-  for (const document of documents) {
+  for (const [documentIndex, document] of documents.entries()) {
     if (document.errors.length > 0) continue;
     let manifest;
     try {
@@ -17547,14 +17581,16 @@ function findExplicitRootUsers(rule, file) {
     } catch {
       continue;
     }
-    if (!manifest || typeof manifest.kind !== "string") continue;
-    const podSpecPath = podSpecPathFor(manifest.kind);
+    if (!manifest || typeof manifest.kind !== "string" || typeof manifest.apiVersion !== "string") continue;
+    const podSpecPath = podSpecPathFor(manifest.apiVersion, manifest.kind);
     if (podSpecPath === void 0) continue;
     const podSpec = asRecord(valueAtPath(manifest, podSpecPath));
     if (podSpec === void 0) continue;
+    const podSecurityContextPath = [...podSpecPath, "securityContext"];
     const podSecurityContext = asRecord(podSpec.securityContext);
     const podRunAsUser = podSecurityContext?.runAsUser;
     const podRunAsNonRoot = podSecurityContext?.runAsNonRoot;
+    const podRunAsUserEvidence = fieldNodeEvidence(document, podSecurityContextPath, "runAsUser");
     const containers = CONTAINER_COLLECTIONS.flatMap((collection) => {
       const value = podSpec[collection];
       return Array.isArray(value) ? value.map((container, index) => ({ collection, index, container: asRecord(container) })).filter(
@@ -17565,25 +17601,73 @@ function findExplicitRootUsers(rule, file) {
       const securityContext = asRecord(container.securityContext);
       const effectiveRunAsNonRoot = securityContext?.runAsNonRoot ?? podRunAsNonRoot;
       if (securityContext?.runAsUser !== 0 || effectiveRunAsNonRoot === true) continue;
-      const path2 = [...podSpecPath, collection, index, "securityContext", "runAsUser"];
-      addRootDetection(detections, rule, file, document.getIn(path2, true), manifest.kind, container.name, "container");
+      const securityContextPath = [...podSpecPath, collection, index, "securityContext"];
+      const runAsUser = fieldNodeEvidence(document, securityContextPath, "runAsUser");
+      const policyNodes2 = securityContext?.runAsNonRoot === false ? [fieldNodeEvidence(document, securityContextPath, "runAsNonRoot").primary] : securityContext?.runAsNonRoot === void 0 && podRunAsNonRoot === false ? [fieldNodeEvidence(document, podSecurityContextPath, "runAsNonRoot").primary] : [];
+      addRootDetection(
+        detections,
+        rule,
+        file,
+        document,
+        runAsUser.value,
+        runAsUser.primary,
+        policyNodes2,
+        manifest.kind,
+        container.name,
+        "container",
+        `${documentIndex}:${podSpecPath.join(".")}:${collection}:${containerIdentity(container, index)}`
+      );
     }
-    if (podRunAsUser !== 0 || podRunAsNonRoot === true || containers.length === 0) continue;
-    const inheritsRoot = containers.some(({ container }) => {
+    if (podRunAsUser !== 0 || containers.length === 0) continue;
+    const inheritingContainers = containers.filter(({ container }) => {
       const securityContext = asRecord(container.securityContext);
-      return securityContext?.runAsUser === void 0 && securityContext?.runAsNonRoot !== true;
+      const effectiveRunAsNonRoot = securityContext?.runAsNonRoot ?? podRunAsNonRoot;
+      return securityContext?.runAsUser === void 0 && effectiveRunAsNonRoot !== true;
     });
-    if (!inheritsRoot) continue;
-    const path = [...podSpecPath, "securityContext", "runAsUser"];
-    addRootDetection(detections, rule, file, document.getIn(path, true), manifest.kind, void 0, "pod");
+    if (inheritingContainers.length === 0) continue;
+    const activationNodes = inheritingContainers.flatMap(({ collection, index }) => [
+      document.getIn([...podSpecPath, collection, index, "name"], true),
+      document.getIn([...podSpecPath, collection, index, "image"], true)
+    ]);
+    const policyNodes = inheritingContainers.flatMap(({ collection, index, container }) => {
+      const securityContext = asRecord(container.securityContext);
+      return securityContext?.runAsNonRoot === false ? [fieldNodeEvidence(document, [...podSpecPath, collection, index, "securityContext"], "runAsNonRoot").primary] : [];
+    });
+    if (podRunAsNonRoot === false) {
+      policyNodes.push(fieldNodeEvidence(document, podSecurityContextPath, "runAsNonRoot").primary);
+    }
+    addRootDetection(
+      detections,
+      rule,
+      file,
+      document,
+      podRunAsUserEvidence.value,
+      podRunAsUserEvidence.primary,
+      [...policyNodes, ...activationNodes],
+      manifest.kind,
+      void 0,
+      "pod",
+      `${documentIndex}:${podSpecPath.join(".")}:pod:${inheritingContainers.map(({ collection, index, container }) => `${collection}:${containerIdentity(container, index)}`).join(",")}`
+    );
   }
   return detections;
 }
-function podSpecPathFor(kind) {
-  if (kind === "Pod") return ["spec"];
-  if (kind === "PodTemplate") return ["template", "spec"];
-  if (kind === "CronJob") return ["spec", "jobTemplate", "spec", "template", "spec"];
-  if (TEMPLATE_WORKLOADS.has(kind)) return ["spec", "template", "spec"];
+function isHelmValuesFile(path) {
+  return /^values(?:[-._][^/]*)?\.ya?ml$/i.test(basename2(path));
+}
+function podSpecPathFor(apiVersion, kind) {
+  const [group] = apiVersion.includes("/") ? apiVersion.split("/", 1) : [""];
+  if (group === "" && apiVersion === "v1") {
+    if (kind === "Pod") return ["spec"];
+    if (kind === "PodTemplate") return ["template", "spec"];
+    if (kind === "ReplicationController") return ["spec", "template", "spec"];
+    return void 0;
+  }
+  if (group === "apps" && ["DaemonSet", "Deployment", "ReplicaSet", "StatefulSet"].includes(kind)) {
+    return ["spec", "template", "spec"];
+  }
+  if (group === "batch" && kind === "Job") return ["spec", "template", "spec"];
+  if (group === "batch" && kind === "CronJob") return ["spec", "jobTemplate", "spec", "template", "spec"];
   return void 0;
 }
 function valueAtPath(value, path) {
@@ -17593,18 +17677,45 @@ function valueAtPath(value, path) {
   }
   return current;
 }
-function addRootDetection(detections, rule, file, node, workloadKind, containerName, source) {
-  if (!(0, import_yaml2.isScalar)(node) || node.value !== 0 || node.range === null || node.range === void 0) return;
-  const line = lineAtIndex(file.source, node.range[0]);
-  if (file.status === "modified" && !file.changedLines.has(line)) return;
+function containerIdentity(container, index) {
+  return typeof container.name === "string" && container.name.length > 0 ? `name:${container.name}` : `index:${index}`;
+}
+function fieldNodeEvidence(document, parentPath, field) {
+  const parent = document.getIn(parentPath, true);
+  if ((0, import_yaml2.isAlias)(parent)) {
+    const resolved = parent.resolve(document);
+    if ((0, import_yaml2.isMap)(resolved)) {
+      return { value: resolved.get(field, true), primary: parent };
+    }
+  }
+  const value = document.getIn([...parentPath, field], true);
+  return { value, primary: value };
+}
+function addRootDetection(detections, rule, file, document, runAsUserNode, primaryEvidenceNode, policyNodes, workloadKind, containerName, source, semanticKey) {
+  if (!isNumericZeroNode(runAsUserNode, document)) return;
+  const primaryIndex = nodeStart(primaryEvidenceNode);
+  if (primaryIndex === void 0) return;
+  const resolvedValueIndex = (0, import_yaml2.isAlias)(runAsUserNode) ? nodeStart(runAsUserNode.resolve(document)) : nodeStart(runAsUserNode);
+  const eligibleIndexes = [primaryIndex, resolvedValueIndex, ...policyNodes.map(nodeStart)].filter((index2) => index2 !== void 0);
+  const index = file.status === "modified" ? eligibleIndexes.find((candidate) => file.changedLines.has(lineAtIndex(file.source, candidate))) : primaryIndex;
+  if (index === void 0) return;
   const name = typeof containerName === "string" ? containerName : void 0;
   detections.push({
     rule,
     file: file.path,
-    ...locateFromIndex(file.source, node.range[0]),
+    ...locateFromIndex(file.source, index),
     label: source === "container" && name !== void 0 ? `Container ${name} explicitly sets runAsUser to UID 0` : `${workloadKind} explicitly sets runAsUser to UID 0`,
-    data: { workloadKind, containerName: name, source, runAsUser: 0 }
+    data: { workloadKind, containerName: name, source, runAsUser: 0 },
+    semanticKey
   });
+}
+function isNumericZeroNode(node, document) {
+  const resolved = (0, import_yaml2.isAlias)(node) ? node.resolve(document) : node;
+  return (0, import_yaml2.isScalar)(resolved) && resolved.value === 0;
+}
+function nodeStart(node) {
+  if (!(0, import_yaml2.isScalar)(node) && !(0, import_yaml2.isAlias)(node) || node.range === null || node.range === void 0) return void 0;
+  return node.range[0];
 }
 function findSelectorTemplateMismatches(rule, file) {
   const detections = [];
@@ -17677,7 +17788,16 @@ async function changedSource(ctx, path) {
   if (head !== void 0 && !ctx.change?.worktree) args.push(head);
   args.push("--", path);
   const patch = await gitOutput(ctx.repoPath, args);
-  return { changedLines: changedLineNumbers(patch), status: "modified" };
+  let previousSource;
+  try {
+    previousSource = await gitOutput(ctx.repoPath, ["show", `${base}:${path}`]);
+  } catch {
+  }
+  return {
+    changedLines: changedLineNumbers(patch),
+    status: "modified",
+    ...previousSource === void 0 ? {} : { previousSource }
+  };
 }
 async function existsAtRevision(repoPath, revision, path) {
   try {

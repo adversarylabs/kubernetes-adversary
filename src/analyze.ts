@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { basename, join, sep } from "node:path";
 import { promisify } from "node:util";
 import { type RuleContext } from "@adversarylabs/sdk";
-import { isScalar, parseAllDocuments } from "yaml";
+import { isAlias, isMap, isScalar, parseAllDocuments, type Document } from "yaml";
 import { observationFor } from "./rules.js";
 import { spec, type MatchExpression, type RuleSpec } from "./spec.js";
 
@@ -14,10 +14,11 @@ const execute = promisify(execFile);
 interface SourceFile {
   path: string;
   source: string;
+  previousSource?: string;
   status: "added" | "modified" | "repository";
   changedLines: Set<number>;
 }
-interface Detection { rule: RuleSpec; file: string; line: number; snippet: string; label: string; data: Record<string, unknown> }
+interface Detection { rule: RuleSpec; file: string; line: number; snippet: string; label: string; data: Record<string, unknown>; semanticKey?: string }
 
 export async function analyzeRepository(ctx: RuleContext): Promise<void> {
   // Full tree for existence/context checks; content uses CLI/SDK review scope.
@@ -43,6 +44,7 @@ export async function analyzeRepository(ctx: RuleContext): Promise<void> {
     sources.push({
       path: file.path,
       source: file.content,
+      ...(change.previousSource === undefined ? {} : { previousSource: change.previousSource }),
       status: change.status,
       changedLines: change.changedLines,
     });
@@ -110,10 +112,25 @@ function evaluate(rule: RuleSpec, sources: SourceFile[], allPaths: string[]): De
 }
 
 const SELECTOR_WORKLOADS = new Set(["DaemonSet", "Deployment", "ReplicaSet", "StatefulSet"]);
-const TEMPLATE_WORKLOADS = new Set(["DaemonSet", "Deployment", "Job", "ReplicaSet", "ReplicationController", "StatefulSet"]);
 const CONTAINER_COLLECTIONS = ["containers", "initContainers", "ephemeralContainers"] as const;
 
 function findExplicitRootUsers(rule: RuleSpec, file: SourceFile): Detection[] {
+  if (isHelmValuesFile(file.path)) return [];
+  const current = collectExplicitRootUsers(rule, file);
+  if (file.status !== "modified" || file.previousSource === undefined) return current;
+  const previous = collectExplicitRootUsers(rule, {
+    path: file.path,
+    source: file.previousSource,
+    status: "repository",
+    changedLines: new Set<number>(),
+  });
+  const previousKeys = new Set(previous.flatMap((detection) =>
+    detection.semanticKey === undefined ? [] : [detection.semanticKey]));
+  return current.filter((detection) =>
+    detection.semanticKey === undefined || !previousKeys.has(detection.semanticKey));
+}
+
+function collectExplicitRootUsers(rule: RuleSpec, file: SourceFile): Detection[] {
   const detections: Detection[] = [];
   let documents;
   try {
@@ -122,7 +139,7 @@ function findExplicitRootUsers(rule: RuleSpec, file: SourceFile): Detection[] {
     return [];
   }
 
-  for (const document of documents) {
+  for (const [documentIndex, document] of documents.entries()) {
     if (document.errors.length > 0) continue;
     let manifest: Record<string, unknown> | undefined;
     try {
@@ -130,15 +147,17 @@ function findExplicitRootUsers(rule: RuleSpec, file: SourceFile): Detection[] {
     } catch {
       continue;
     }
-    if (!manifest || typeof manifest.kind !== "string") continue;
-    const podSpecPath = podSpecPathFor(manifest.kind);
+    if (!manifest || typeof manifest.kind !== "string" || typeof manifest.apiVersion !== "string") continue;
+    const podSpecPath = podSpecPathFor(manifest.apiVersion, manifest.kind);
     if (podSpecPath === undefined) continue;
     const podSpec = asRecord(valueAtPath(manifest, podSpecPath));
     if (podSpec === undefined) continue;
 
+    const podSecurityContextPath = [...podSpecPath, "securityContext"];
     const podSecurityContext = asRecord(podSpec.securityContext);
     const podRunAsUser = podSecurityContext?.runAsUser;
     const podRunAsNonRoot = podSecurityContext?.runAsNonRoot;
+    const podRunAsUserEvidence = fieldNodeEvidence(document, podSecurityContextPath, "runAsUser");
     const containers = CONTAINER_COLLECTIONS.flatMap((collection) => {
       const value = podSpec[collection];
       return Array.isArray(value)
@@ -153,28 +172,84 @@ function findExplicitRootUsers(rule: RuleSpec, file: SourceFile): Detection[] {
       const securityContext = asRecord(container.securityContext);
       const effectiveRunAsNonRoot = securityContext?.runAsNonRoot ?? podRunAsNonRoot;
       if (securityContext?.runAsUser !== 0 || effectiveRunAsNonRoot === true) continue;
-      const path = [...podSpecPath, collection, index, "securityContext", "runAsUser"];
-      addRootDetection(detections, rule, file, document.getIn(path, true), manifest.kind, container.name, "container");
+      const securityContextPath = [...podSpecPath, collection, index, "securityContext"];
+      const runAsUser = fieldNodeEvidence(document, securityContextPath, "runAsUser");
+      const policyNodes = securityContext?.runAsNonRoot === false
+        ? [fieldNodeEvidence(document, securityContextPath, "runAsNonRoot").primary]
+        : securityContext?.runAsNonRoot === undefined && podRunAsNonRoot === false
+          ? [fieldNodeEvidence(document, podSecurityContextPath, "runAsNonRoot").primary]
+          : [];
+      addRootDetection(
+        detections,
+        rule,
+        file,
+        document,
+        runAsUser.value,
+        runAsUser.primary,
+        policyNodes,
+        manifest.kind,
+        container.name,
+        "container",
+        `${documentIndex}:${podSpecPath.join(".")}:${collection}:${containerIdentity(container, index)}`,
+      );
     }
 
-    if (podRunAsUser !== 0 || podRunAsNonRoot === true || containers.length === 0) continue;
-    const inheritsRoot = containers.some(({ container }) => {
+    if (podRunAsUser !== 0 || containers.length === 0) continue;
+    const inheritingContainers = containers.filter(({ container }) => {
       const securityContext = asRecord(container.securityContext);
-      return securityContext?.runAsUser === undefined && securityContext?.runAsNonRoot !== true;
+      const effectiveRunAsNonRoot = securityContext?.runAsNonRoot ?? podRunAsNonRoot;
+      return securityContext?.runAsUser === undefined && effectiveRunAsNonRoot !== true;
     });
-    if (!inheritsRoot) continue;
-    const path = [...podSpecPath, "securityContext", "runAsUser"];
-    addRootDetection(detections, rule, file, document.getIn(path, true), manifest.kind, undefined, "pod");
+    if (inheritingContainers.length === 0) continue;
+    const activationNodes = inheritingContainers.flatMap(({ collection, index }) => [
+      document.getIn([...podSpecPath, collection, index, "name"], true),
+      document.getIn([...podSpecPath, collection, index, "image"], true),
+    ]);
+    const policyNodes = inheritingContainers.flatMap(({ collection, index, container }) => {
+      const securityContext = asRecord(container.securityContext);
+      return securityContext?.runAsNonRoot === false
+        ? [fieldNodeEvidence(document, [...podSpecPath, collection, index, "securityContext"], "runAsNonRoot").primary]
+        : [];
+    });
+    if (podRunAsNonRoot === false) {
+      policyNodes.push(fieldNodeEvidence(document, podSecurityContextPath, "runAsNonRoot").primary);
+    }
+    addRootDetection(
+      detections,
+      rule,
+      file,
+      document,
+      podRunAsUserEvidence.value,
+      podRunAsUserEvidence.primary,
+      [...policyNodes, ...activationNodes],
+      manifest.kind,
+      undefined,
+      "pod",
+      `${documentIndex}:${podSpecPath.join(".")}:pod:${inheritingContainers
+        .map(({ collection, index, container }) => `${collection}:${containerIdentity(container, index)}`).join(",")}`,
+    );
   }
 
   return detections;
 }
 
-function podSpecPathFor(kind: string): Array<string> | undefined {
-  if (kind === "Pod") return ["spec"];
-  if (kind === "PodTemplate") return ["template", "spec"];
-  if (kind === "CronJob") return ["spec", "jobTemplate", "spec", "template", "spec"];
-  if (TEMPLATE_WORKLOADS.has(kind)) return ["spec", "template", "spec"];
+function isHelmValuesFile(path: string): boolean {
+  return /^values(?:[-._][^/]*)?\.ya?ml$/i.test(basename(path));
+}
+
+function podSpecPathFor(apiVersion: string, kind: string): Array<string> | undefined {
+  const [group] = apiVersion.includes("/") ? apiVersion.split("/", 1) : [""];
+  if (group === "" && apiVersion === "v1") {
+    if (kind === "Pod") return ["spec"];
+    if (kind === "PodTemplate") return ["template", "spec"];
+    if (kind === "ReplicationController") return ["spec", "template", "spec"];
+    return undefined;
+  }
+  if (group === "apps" && ["DaemonSet", "Deployment", "ReplicaSet", "StatefulSet"].includes(kind)) {
+    return ["spec", "template", "spec"];
+  }
+  if (group === "batch" && kind === "Job") return ["spec", "template", "spec"];
+  if (group === "batch" && kind === "CronJob") return ["spec", "jobTemplate", "spec", "template", "spec"];
   return undefined;
 }
 
@@ -186,28 +261,74 @@ function valueAtPath(value: unknown, path: readonly string[]): unknown {
   return current;
 }
 
+function containerIdentity(container: Record<string, unknown>, index: number): string {
+  return typeof container.name === "string" && container.name.length > 0
+    ? `name:${container.name}`
+    : `index:${index}`;
+}
+
+function fieldNodeEvidence(
+  document: Document,
+  parentPath: readonly (string | number)[],
+  field: string,
+): { value: unknown; primary: unknown } {
+  const parent = document.getIn(parentPath, true);
+  if (isAlias(parent)) {
+    const resolved = parent.resolve(document);
+    if (isMap(resolved)) {
+      return { value: resolved.get(field, true), primary: parent };
+    }
+  }
+  const value = document.getIn([...parentPath, field], true);
+  return { value, primary: value };
+}
+
 function addRootDetection(
   detections: Detection[],
   rule: RuleSpec,
   file: SourceFile,
-  node: unknown,
+  document: Document,
+  runAsUserNode: unknown,
+  primaryEvidenceNode: unknown,
+  policyNodes: unknown[],
   workloadKind: string,
   containerName: unknown,
   source: "container" | "pod",
+  semanticKey: string,
 ): void {
-  if (!isScalar(node) || node.value !== 0 || node.range === null || node.range === undefined) return;
-  const line = lineAtIndex(file.source, node.range[0]);
-  if (file.status === "modified" && !file.changedLines.has(line)) return;
+  if (!isNumericZeroNode(runAsUserNode, document)) return;
+  const primaryIndex = nodeStart(primaryEvidenceNode);
+  if (primaryIndex === undefined) return;
+  const resolvedValueIndex = isAlias(runAsUserNode)
+    ? nodeStart(runAsUserNode.resolve(document))
+    : nodeStart(runAsUserNode);
+  const eligibleIndexes = [primaryIndex, resolvedValueIndex, ...policyNodes.map(nodeStart)]
+    .filter((index): index is number => index !== undefined);
+  const index = file.status === "modified"
+    ? eligibleIndexes.find((candidate) => file.changedLines.has(lineAtIndex(file.source, candidate)))
+    : primaryIndex;
+  if (index === undefined) return;
   const name = typeof containerName === "string" ? containerName : undefined;
   detections.push({
     rule,
     file: file.path,
-    ...locateFromIndex(file.source, node.range[0]),
+    ...locateFromIndex(file.source, index),
     label: source === "container" && name !== undefined
       ? `Container ${name} explicitly sets runAsUser to UID 0`
       : `${workloadKind} explicitly sets runAsUser to UID 0`,
     data: { workloadKind, containerName: name, source, runAsUser: 0 },
+    semanticKey,
   });
+}
+
+function isNumericZeroNode(node: unknown, document: Document): boolean {
+  const resolved = isAlias(node) ? node.resolve(document) : node;
+  return isScalar(resolved) && resolved.value === 0;
+}
+
+function nodeStart(node: unknown): number | undefined {
+  if ((!isScalar(node) && !isAlias(node)) || node.range === null || node.range === undefined) return undefined;
+  return node.range[0];
 }
 
 function findSelectorTemplateMismatches(rule: RuleSpec, file: SourceFile): Detection[] {
@@ -281,7 +402,7 @@ function lineAtIndex(source: string, index: number): number {
 async function changedSource(
   ctx: RuleContext,
   path: string,
-): Promise<Pick<SourceFile, "changedLines" | "status">> {
+): Promise<Pick<SourceFile, "changedLines" | "status" | "previousSource">> {
   const base = ctx.change?.baseRef;
   if (base === undefined || !(await existsAtRevision(ctx.repoPath, base, path))) {
     return { changedLines: new Set<number>(), status: "added" };
@@ -292,7 +413,17 @@ async function changedSource(
   if (head !== undefined && !ctx.change?.worktree) args.push(head);
   args.push("--", path);
   const patch = await gitOutput(ctx.repoPath, args);
-  return { changedLines: changedLineNumbers(patch), status: "modified" };
+  let previousSource: string | undefined;
+  try {
+    previousSource = await gitOutput(ctx.repoPath, ["show", `${base}:${path}`]);
+  } catch {
+    // Preserve current changed-line behavior if the base blob cannot be read.
+  }
+  return {
+    changedLines: changedLineNumbers(patch),
+    status: "modified",
+    ...(previousSource === undefined ? {} : { previousSource }),
+  };
 }
 
 async function existsAtRevision(repoPath: string, revision: string, path: string): Promise<boolean> {
