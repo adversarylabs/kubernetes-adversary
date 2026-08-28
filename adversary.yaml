@@ -1,5 +1,5 @@
 name: adversarylabs/container/kubernetes
-version: 0.0.13
+version: 0.0.14
 description: Reviews Kubernetes manifests for workload isolation, selector integrity, RBAC, and image safety.
 
 triggers:

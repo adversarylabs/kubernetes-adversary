@@ -17970,7 +17970,7 @@ function matchesGlob(path, glob) {
 
 // src/index.ts
 function createApp() {
-  const app = new Adversary({ name: "kubernetes", version: "0.0.12", review: { maximumFindings: 8 } });
+  const app = new Adversary({ name: "kubernetes", version: "0.0.14", review: { maximumFindings: 8 } });
   registerRules(app);
   app.rule("kubernetes.review", async (ctx) => analyzeRepository(ctx));
   return app;
