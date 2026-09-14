@@ -29,6 +29,6 @@ test("the bundled runtime executes without node_modules", async () => {
   };
   const result = await runtime.createApp().run({ input: { source: { path: target } } });
   assert.equal(result.adversary.name, "kubernetes");
-  assert.equal(result.adversary.version, "0.0.14");
+  assert.equal(result.adversary.version, (JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as { version: string }).version);
   assert.deepEqual(result.findings, []);
 });
